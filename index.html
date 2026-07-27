@@ -1212,6 +1212,23 @@ document.getElementById("upload-btn").addEventListener("click", startUpload);
 
 function startUpload(){
   if(selectedFiles.length === 0 || isUploading) return;
+
+  // タイトルが実質空になってしまう項目がないか事前チェック
+  const commonTitleVal = commonTitleInput.value.trim();
+  const seqOnVal = seqEnabledInput.checked;
+  const emptyTitleItems = selectedFiles.filter(item => {
+    const t = buildTitle(item, commonTitleVal, seqOnVal).trim();
+    return t.length === 0;
+  });
+  if(emptyTitleItems.length > 0){
+    const ok = confirm(
+      `${emptyTitleItems.length}件の動画がタイトル未入力のままです（共通タイトル・個別タイトル・連番がすべて空）。\n` +
+      `このまま進めると、YouTube側で元のファイル名がタイトルとして使われる可能性があります。\n\n` +
+      `このままアップロードを続けますか？`
+    );
+    if(!ok) return;
+  }
+
   isUploading = true;
 
   // 実行の瞬間：編集中(未確定)だった項目だけスキップ扱いにし、それ以外は全件即ロック
