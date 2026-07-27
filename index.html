@@ -1,0 +1,1392 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+<title>動画アップローダー</title>
+<meta name="theme-color" content="#1a2332">
+<style>
+  :root{
+    --court-navy: #1a2332;
+    --court-navy-light: #26334a;
+    --line-white: #f5f3ee;
+    --ball-orange: #e8641c;
+    --ball-orange-dim: #b84f16;
+    --mute-gray: #7b8494;
+    --success-green: #2f9e5c;
+    --warning-yellow: #d9a940;
+    --error-red: #d94848;
+    --border-soft: rgba(245,243,238,0.12);
+  }
+
+  *{ box-sizing: border-box; }
+
+  body{
+    margin:0;
+    background: var(--court-navy);
+    color: var(--line-white);
+    font-family: -apple-system, BlinkMacSystemFont, "Hiragino Sans", "Noto Sans JP", sans-serif;
+    min-height: 100vh;
+    padding-bottom: 40px;
+  }
+
+  header{
+    padding: 20px 20px 16px;
+    border-bottom: 1px solid var(--border-soft);
+    position: sticky;
+    top: 0;
+    background: var(--court-navy);
+    z-index: 20;
+  }
+  .logo-row{ display:flex; align-items:center; justify-content:space-between; }
+  .logo-mark{ font-weight: 900; font-size: 22px; letter-spacing: 0.5px; }
+  .logo-mark span{ color: var(--ball-orange); }
+  .header-actions{ display:flex; align-items:center; gap:10px; }
+
+  main{
+    max-width: 640px;
+    margin: 0 auto;
+    padding: 0 16px;
+  }
+
+  .btn{
+    appearance:none;
+    border:none;
+    border-radius: 10px;
+    padding: 13px 22px;
+    font-size: 15px;
+    font-weight: 700;
+    cursor:pointer;
+    transition: transform .12s ease, opacity .12s ease;
+    font-family: inherit;
+  }
+  .btn:active{ transform: scale(0.97); }
+  .btn-primary{
+    background: var(--ball-orange);
+    color: var(--line-white);
+    width: 100%;
+  }
+  .btn-primary:hover{ background: var(--ball-orange-dim); }
+  .btn-primary:disabled{ opacity: .4; cursor:not-allowed; }
+  .btn-ghost{
+    background: transparent;
+    color: var(--mute-gray);
+    border: 1px solid var(--border-soft);
+    font-size: 13px;
+    padding: 8px 14px;
+    border-radius: 8px;
+    cursor:pointer;
+    font-family: inherit;
+  }
+  .icon-btn{
+    background: transparent;
+    border: 1px solid var(--border-soft);
+    color: var(--line-white);
+    width: 34px; height: 34px;
+    border-radius: 8px;
+    cursor: pointer;
+    display:flex; align-items:center; justify-content:center;
+    font-size: 15px;
+    flex-shrink: 0;
+  }
+  .icon-btn:disabled{ opacity:.35; cursor:not-allowed; }
+
+  .auth-card{
+    margin-top: 24px;
+    padding: 20px;
+    background: var(--court-navy-light);
+    border-radius: 14px;
+    border: 1px solid var(--border-soft);
+    text-align:center;
+  }
+  .auth-card p{
+    color: var(--mute-gray);
+    font-size: 13.5px;
+    line-height: 1.7;
+    margin: 6px 0 18px;
+  }
+
+  #app-body{ display:none; }
+  #app-body.active{ display:block; }
+
+  /* ---------- top config bar ---------- */
+  .top-bar{
+    margin-top: 16px;
+    background: var(--court-navy-light);
+    border: 1px solid var(--border-soft);
+    border-radius: 14px;
+    padding: 12px 14px;
+  }
+  .account-row{
+    display:flex;
+    justify-content:space-between;
+    align-items:center;
+    gap: 8px;
+  }
+  .account-info{ display:flex; align-items:center; gap:9px; min-width:0; }
+  .account-avatar{
+    width:28px; height:28px; border-radius:50%;
+    background: rgba(232,100,28,0.18);
+    color: var(--ball-orange);
+    display:flex; align-items:center; justify-content:center;
+    font-size:12px; font-weight:800; flex-shrink:0;
+  }
+  .account-text{ min-width:0; }
+  .account-name{ font-size:12.5px; font-weight:700; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .account-email{ font-size:10.5px; color:var(--mute-gray); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .status-badge{
+    font-size:10.5px;
+    font-weight:700;
+    padding:3px 9px;
+    border-radius:20px;
+    white-space:nowrap;
+    flex-shrink:0;
+  }
+  .status-badge.free{ color:var(--success-green); background:rgba(47,158,92,0.14); }
+  .status-badge.paid{ color:var(--ball-orange); background:rgba(232,100,28,0.14); }
+  .status-badge.blocked{ color:var(--error-red); background:rgba(217,72,72,0.14); }
+
+  .top-bar-divider{ border-top:1px solid var(--border-soft); margin:10px 0; }
+
+  .field{ margin-bottom: 12px; }
+  .field:last-child{ margin-bottom:0; }
+  label{
+    display:block;
+    font-size: 11.5px;
+    color: var(--mute-gray);
+    margin-bottom: 5px;
+    font-weight: 600;
+  }
+  input[type=text], input[type=number], select{
+    width:100%;
+    background: var(--court-navy);
+    border: 1px solid var(--border-soft);
+    color: var(--line-white);
+    padding: 9px 10px;
+    border-radius: 8px;
+    font-size: 14px;
+    font-family: inherit;
+  }
+  input:disabled, select:disabled{ opacity:.45; cursor:not-allowed; }
+  input[type=text]:focus, input[type=number]:focus, select:focus{
+    outline: 2px solid var(--ball-orange);
+    outline-offset: 1px;
+  }
+
+  .seq-row{ display:flex; align-items:center; gap:12px; flex-wrap:wrap; }
+  .seq-check{ display:flex; align-items:center; gap:6px; font-size:12px; color:var(--line-white); white-space:nowrap; }
+  .seq-check input{ width:15px; height:15px; }
+  .seq-stepper{ display:flex; align-items:center; gap:4px; }
+  .seq-stepper span.label{ font-size:11px; color:var(--mute-gray); margin-right:2px; white-space:nowrap; }
+  .stepper-btn{
+    width:24px; height:24px;
+    background: var(--court-navy);
+    border: 1px solid var(--border-soft);
+    color: var(--line-white);
+    border-radius: 6px;
+    cursor:pointer;
+    font-size: 13px;
+    display:flex; align-items:center; justify-content:center;
+    font-family: inherit;
+  }
+  .stepper-btn:disabled{ opacity:.35; cursor:not-allowed; }
+  .seq-num-input{
+    width: 46px !important;
+    text-align:center;
+    padding: 5px 4px !important;
+    font-weight:800;
+    color: var(--ball-orange);
+  }
+
+  .section-title{
+    font-size: 12px;
+    letter-spacing: 1.5px;
+    color: var(--ball-orange);
+    font-weight: 800;
+    text-transform: uppercase;
+    margin: 26px 0 10px;
+  }
+  .section-hint{
+    font-size:11px; color:var(--mute-gray); margin: -4px 0 10px;
+  }
+
+  .drop-zone{
+    border: 2px dashed var(--border-soft);
+    border-radius: 14px;
+    padding: 26px 16px;
+    text-align:center;
+    cursor:pointer;
+    transition: border-color .15s ease, background .15s ease;
+  }
+  .drop-zone:hover, .drop-zone.dragover{
+    border-color: var(--ball-orange);
+    background: rgba(232,100,28,0.06);
+  }
+  .drop-zone.locked{ cursor:not-allowed; opacity:.4; }
+  .drop-zone .icon{ font-size: 28px; margin-bottom: 6px; }
+  .drop-zone p{ margin: 4px 0; color: var(--mute-gray); font-size: 13px; }
+  .drop-zone strong{ color: var(--line-white); }
+  input[type=file]{ display:none; }
+
+  .playlist-row{ display:flex; gap:8px; }
+  .playlist-row select{ flex:1; }
+
+  .visibility-toggle{ display:flex; gap:8px; }
+  .vis-btn{
+    flex:1;
+    padding: 10px 4px;
+    border-radius: 8px;
+    border: 1px solid var(--border-soft);
+    background: var(--court-navy);
+    color: var(--mute-gray);
+    font-size: 12.5px;
+    font-weight: 700;
+    cursor:pointer;
+    text-align:center;
+    font-family: inherit;
+  }
+  .vis-btn.selected{
+    border-color: var(--ball-orange);
+    color: var(--line-white);
+    background: rgba(232,100,28,0.14);
+  }
+  .vis-btn:disabled{ opacity:.4; cursor:not-allowed; }
+
+  /* video queue */
+  .queue{ margin-top: 12px; display:flex; flex-direction:column; gap:10px; }
+  .video-card{
+    background: var(--court-navy-light);
+    border: 1px solid var(--border-soft);
+    border-radius: 12px;
+    padding: 12px;
+    display:flex;
+    gap:8px;
+  }
+  .video-card.locked{ opacity:.55; }
+  .video-card.uploading{ border-color: var(--ball-orange); }
+  .video-card.skip-wait{ border-color: var(--warning-yellow); }
+  .video-card.error{ border-color: var(--error-red); }
+  .video-card.done{ border-color: var(--success-green); }
+
+  .drag-handle{
+    color: var(--mute-gray);
+    cursor: grab;
+    display:flex; align-items:center;
+    padding-top:4px;
+    flex-shrink:0;
+    touch-action: none;
+  }
+  .drag-handle.disabled{ cursor:not-allowed; opacity:.3; }
+  .video-card.dragging{ opacity:.4; }
+
+  .video-card-body{ flex:1; min-width:0; }
+
+  .video-fname{
+    font-size: 11px;
+    color: var(--mute-gray);
+    overflow:hidden;
+    text-overflow:ellipsis;
+    white-space:nowrap;
+    margin-bottom: 4px;
+  }
+  .video-meta{
+    display:flex;
+    gap: 9px;
+    margin-bottom: 8px;
+    font-size: 10.5px;
+    color: var(--mute-gray);
+    font-variant-numeric: tabular-nums;
+  }
+  .video-meta span{ display:inline-flex; align-items:center; gap:3px; white-space:nowrap; }
+
+  .card-top-row{ display:flex; align-items:flex-start; justify-content:space-between; gap:8px; }
+  .video-remove{
+    background:none; border:none; color: var(--mute-gray);
+    font-size: 16px; cursor:pointer; padding: 2px 4px;
+    flex-shrink:0;
+  }
+  .video-remove:hover{ color: var(--error-red); }
+  .video-remove:disabled{ opacity:.3; cursor:not-allowed; }
+
+  .title-preview{
+    font-variant-numeric: tabular-nums;
+    font-size: 13px;
+    font-weight: 700;
+    background: var(--court-navy);
+    border-radius: 8px;
+    padding: 8px 10px;
+    display:flex;
+    align-items:center;
+    gap: 6px;
+    flex-wrap: wrap;
+  }
+  .title-preview .fixed{ color: var(--mute-gray); font-weight:600; font-size:12px; white-space:nowrap; }
+  .title-preview input[type=text]{
+    flex:1;
+    min-width: 70px;
+    padding: 5px 8px;
+    font-size: 12.5px;
+    font-weight:700;
+    color: var(--line-white);
+  }
+  .title-preview .num-stepper{ display:flex; align-items:center; gap:2px; flex-shrink:0; }
+  .title-preview .num-stepper input{
+    width: 34px;
+    padding: 4px 2px;
+    text-align:center;
+    font-size: 12.5px;
+    font-weight: 900;
+    color: var(--ball-orange);
+  }
+  .title-preview .mini-stepper-btn{
+    width:20px; height:20px;
+    font-size:11px;
+  }
+
+  .lock-note{
+    display:flex; align-items:center; gap:6px;
+    font-size: 11px; color: var(--mute-gray);
+    margin-top: 8px;
+  }
+  .lock-note.skip{ color: var(--warning-yellow); }
+
+  .progress-track{
+    margin-top: 8px;
+    height: 7px;
+    border-radius: 6px;
+    background: var(--court-navy);
+    overflow:hidden;
+  }
+  .progress-fill{
+    height:100%;
+    width:0%;
+    background: linear-gradient(90deg, var(--ball-orange-dim), var(--ball-orange));
+    transition: width .2s ease;
+  }
+  .status-line{
+    margin-top: 7px;
+    font-size: 11.5px;
+    color: var(--mute-gray);
+  }
+  .status-line.done{ color: var(--success-green); font-weight:700; }
+  .status-line.error{ color: var(--error-red); font-weight:700; }
+
+  .error-detail-toggle{
+    font-size: 11px;
+    color: var(--error-red);
+    text-decoration: underline;
+    cursor:pointer;
+    margin-top: 4px;
+    display:inline-block;
+    background:none; border:none; font-family:inherit; padding:0;
+  }
+  .error-detail{
+    display:none;
+    margin-top: 6px;
+    background: rgba(217,72,72,0.08);
+    border: 1px solid rgba(217,72,72,0.3);
+    border-radius: 6px;
+    padding: 8px 10px;
+    font-size: 10.5px;
+    color: var(--mute-gray);
+    font-family: ui-monospace, "SF Mono", Consolas, monospace;
+    white-space: pre-wrap;
+    word-break: break-all;
+  }
+  .error-detail.expanded{ display:block; }
+
+  .warning-box{
+    display:flex; gap:8px; align-items:flex-start;
+    background: rgba(217,169,64,0.12);
+    border: 1px solid rgba(217,169,64,0.35);
+    border-radius: 10px;
+    padding: 10px 12px;
+    margin: 14px 0 10px;
+    font-size: 11.5px;
+    color: var(--warning-yellow);
+    line-height: 1.6;
+  }
+
+  .upload-bar{
+    position: sticky;
+    bottom: 0;
+    margin-top: 16px;
+    padding: 14px 0 4px;
+    background: linear-gradient(to top, var(--court-navy) 65%, transparent);
+  }
+
+  .footer-note{
+    text-align:center;
+    color: var(--mute-gray);
+    font-size: 11px;
+    margin-top: 26px;
+    line-height:1.6;
+  }
+
+  /* ---------- settings screen ---------- */
+  #settings-screen{
+    display:none;
+    max-width: 640px;
+    margin: 0 auto;
+    padding: 0 16px;
+  }
+  #settings-screen.active{ display:block; }
+  #main-screen.hidden{ display:none; }
+
+  .settings-header{
+    display:flex; align-items:center; gap:10px;
+    margin-top: 20px; margin-bottom: 20px;
+  }
+  .settings-header h1{ font-size:17px; margin:0; font-weight:800; }
+
+  .settings-block-title{
+    font-size: 11.5px;
+    color: var(--mute-gray);
+    font-weight:700;
+    margin: 0 0 8px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+  .settings-card{
+    background: var(--court-navy-light);
+    border: 1px solid var(--border-soft);
+    border-radius: 12px;
+    padding: 14px;
+    margin-bottom: 20px;
+  }
+  .settings-account-row{ display:flex; align-items:center; gap:10px; }
+  .settings-avatar{
+    width:38px; height:38px; border-radius:50%;
+    background: rgba(232,100,28,0.18);
+    color: var(--ball-orange);
+    display:flex; align-items:center; justify-content:center;
+    font-size:14px; font-weight:800; flex-shrink:0;
+  }
+  .settings-payment-card{
+    border-radius: 12px;
+    padding: 14px;
+    margin-bottom: 10px;
+  }
+  .settings-payment-card.free{ background: rgba(47,158,92,0.14); }
+  .settings-payment-card.paid{ background: rgba(232,100,28,0.14); }
+  .settings-payment-card.blocked{ background: rgba(217,72,72,0.14); }
+  .settings-payment-row{ display:flex; justify-content:space-between; align-items:center; }
+  .settings-payment-title{ font-size:13px; font-weight:800; margin:0; }
+  .settings-payment-title.free{ color:var(--success-green); }
+  .settings-payment-title.paid{ color:var(--ball-orange); }
+  .settings-payment-title.blocked{ color:var(--error-red); }
+  .settings-payment-sub{ font-size:11px; margin:3px 0 0; color:inherit; }
+
+  @media (prefers-reduced-motion: reduce){
+    *{ transition: none !important; }
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="logo-row">
+    <div class="logo-mark">試合動画<span>▸</span>UP</div>
+    <div class="header-actions" id="header-actions" style="display:none;">
+      <button class="icon-btn" id="settings-open-btn" title="設定" aria-label="設定">⚙</button>
+    </div>
+  </div>
+</header>
+
+<main id="main-screen">
+
+  <div class="auth-card" id="auth-card">
+    <p>Googleアカウントでログインして、<br>ご自身のYouTubeチャンネルへの<br>アップロードを開始します。</p>
+    <button class="btn btn-primary" id="signin-btn" disabled>読み込み中…</button>
+  </div>
+
+  <div id="app-body">
+
+    <div class="top-bar">
+      <div class="account-row">
+        <div class="account-info">
+          <div class="account-avatar" id="account-avatar">–</div>
+          <div class="account-text">
+            <div class="account-name" id="account-name">–</div>
+            <div class="account-email" id="account-email">–</div>
+          </div>
+        </div>
+        <span class="status-badge free" id="status-badge">無料期間中</span>
+      </div>
+
+      <div class="top-bar-divider"></div>
+
+      <div class="field">
+        <label for="common-title">共通タイトル（動画名の先頭に付きます）</label>
+        <input type="text" id="common-title" placeholder="例: 20260726 試合" value="20260726 試合">
+      </div>
+
+      <div class="field" style="margin-bottom:0;">
+        <div class="seq-row">
+          <label class="seq-check" style="margin-bottom:0;">
+            <input type="checkbox" id="seq-enabled" checked>連番を付ける（末尾に付与）
+          </label>
+          <div class="seq-stepper">
+            <span class="label">開始番号</span>
+            <button type="button" class="stepper-btn" id="seq-start-minus">−</button>
+            <input type="number" id="seq-start" class="seq-num-input" min="1" value="1">
+            <button type="button" class="stepper-btn" id="seq-start-plus">＋</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="section-title">1. 動画を選ぶ</div>
+    <div class="drop-zone" id="drop-zone">
+      <div class="icon">🎬</div>
+      <p><strong>タップして動画を選択</strong></p>
+      <p>複数選択できます</p>
+      <input type="file" id="file-input" accept="video/*" multiple>
+    </div>
+
+    <div class="section-title">2. アップロード内容</div>
+    <div class="section-hint">ドラッグして並び替えできます</div>
+    <div class="queue" id="queue"></div>
+
+    <div class="section-title">3. 再生リスト</div>
+    <div class="playlist-row">
+      <select id="playlist-select">
+        <option value="">再生リストを読み込み中…</option>
+      </select>
+      <button type="button" class="btn btn-ghost" id="new-playlist-btn">＋新規</button>
+      <button type="button" class="icon-btn" id="reload-playlist-btn" title="再生リストを再読み込み" aria-label="再生リストを再読み込み">⟳</button>
+    </div>
+
+    <div class="section-title">4. 公開設定</div>
+    <div class="visibility-toggle" id="visibility-toggle">
+      <button type="button" class="vis-btn" data-val="public">公開</button>
+      <button type="button" class="vis-btn selected" data-val="unlisted">限定公開</button>
+      <button type="button" class="vis-btn" data-val="private">非公開</button>
+    </div>
+
+    <div class="warning-box" id="pre-upload-warning">
+      <span>⚠</span>
+      <span>アップロード中はこの画面を閉じないでください。<span id="upload-estimate">動画を選択すると目安時間が表示されます。</span></span>
+    </div>
+
+    <div class="upload-bar">
+      <button class="btn btn-primary" id="upload-btn" disabled>動画を選んでください</button>
+    </div>
+
+  </div>
+
+  <div class="footer-note">
+    このページはあなたのブラウザから直接 YouTube へ<br>アップロードします（外部サーバー非経由）<br>
+    <span id="version-label" style="opacity:0.7;">v0.1.0</span>
+  </div>
+
+</main>
+
+<div id="settings-screen">
+  <div class="settings-header">
+    <button class="icon-btn" id="settings-back-btn" aria-label="戻る">←</button>
+    <h1>設定</h1>
+  </div>
+
+  <div class="settings-block-title">ログイン情報</div>
+  <div class="settings-card">
+    <div class="settings-account-row">
+      <div class="settings-avatar" id="settings-avatar">–</div>
+      <div>
+        <div class="account-name" id="settings-account-name" style="font-size:13.5px;">–</div>
+        <div class="account-email" id="settings-account-email" style="font-size:11.5px;">–</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="settings-block-title">お支払い状況</div>
+  <div class="settings-payment-card free" id="settings-payment-card">
+    <div class="settings-payment-row">
+      <div>
+        <p class="settings-payment-title free" id="settings-payment-title">無料期間中</p>
+        <p class="settings-payment-sub" id="settings-payment-sub">あと12日で終了</p>
+      </div>
+      <span style="font-size:20px;">🎁</span>
+    </div>
+  </div>
+  <button class="btn btn-ghost" id="settings-upgrade-btn" style="width:100%; text-align:center; margin-bottom:24px;">有料プランを今すぐ開始（月200円）</button>
+
+  <div class="settings-block-title">アカウント</div>
+  <div class="settings-card" style="padding:4px 14px;">
+    <button class="btn-ghost" id="settings-signout-btn" style="width:100%; text-align:left; border:none; color:var(--error-red); padding:11px 0;">ログアウト</button>
+  </div>
+</div>
+
+<script>
+/* =========================================================
+   動画アップローダー（汎用版）
+   - Google Identity Services (GIS) でOAuth（ログインしたユーザー自身のチャンネルへ）
+   - YouTube Data API v3 で resumable upload
+   - すべてブラウザ内で完結（外部サーバーなし）
+   - チーム設定はLocalStorageに保存（暫定。将来Firebase等へ移行予定）
+   ========================================================= */
+
+const APP_VERSION = "0.1.0";
+console.log(`team-video-uploader v${APP_VERSION}`);
+
+// TODO: 実際に使う際は、各自のGoogle Cloud ConsoleでOAuthクライアントIDを発行して置き換えてください
+const CLIENT_ID = "YOUR_CLIENT_ID.apps.googleusercontent.com";
+const SCOPES = "https://www.googleapis.com/auth/youtube.force-ssl";
+
+const LS_KEY = "video_uploader_settings_v1";
+
+let accessToken = null;
+let tokenClient = null;
+let selectedFiles = []; // {file, id, title, seqNum, duration, modifiedAt, status, errorDetail, progress}
+let currentVisibility = "unlisted";
+let isUploading = false;
+let draggingId = null;
+
+/* ---------- ローカル設定の読み書き（暫定。将来的にFirebase等へ） ---------- */
+function loadLocalSettings(){
+  try{
+    const raw = localStorage.getItem(LS_KEY);
+    if(!raw) return {};
+    return JSON.parse(raw);
+  }catch(e){
+    return {};
+  }
+}
+function saveLocalSettings(patch){
+  const cur = loadLocalSettings();
+  const next = { ...cur, ...patch };
+  try{
+    localStorage.setItem(LS_KEY, JSON.stringify(next));
+  }catch(e){ /* 保存できなくても致命的ではないため無視 */ }
+}
+
+/* ---------- GIS 読み込み ---------- */
+function loadGis(){
+  return new Promise((resolve, reject) => {
+    const s = document.createElement("script");
+    s.src = "https://accounts.google.com/gsi/client";
+    s.onload = resolve;
+    s.onerror = reject;
+    document.head.appendChild(s);
+  });
+}
+
+async function initAuth(){
+  await loadGis();
+  tokenClient = google.accounts.oauth2.initTokenClient({
+    client_id: CLIENT_ID,
+    scope: SCOPES,
+    callback: async (resp) => {
+      if(resp.error){
+        alert("ログインに失敗しました: " + resp.error);
+        return;
+      }
+      accessToken = resp.access_token;
+      onSignedIn();
+    }
+  });
+  const btn = document.getElementById("signin-btn");
+  btn.disabled = false;
+  btn.textContent = "Googleでログイン";
+}
+
+document.getElementById("signin-btn").addEventListener("click", () => {
+  tokenClient.requestAccessToken({ prompt: "" });
+});
+
+function doSignOut(){
+  if(accessToken){
+    google.accounts.oauth2.revoke(accessToken, () => {});
+  }
+  accessToken = null;
+  document.getElementById("auth-card").style.display = "block";
+  document.getElementById("app-body").classList.remove("active");
+  document.getElementById("header-actions").style.display = "none";
+  showMainScreen();
+}
+document.getElementById("settings-signout-btn").addEventListener("click", doSignOut);
+
+async function onSignedIn(){
+  document.getElementById("auth-card").style.display = "none";
+  document.getElementById("app-body").classList.add("active");
+  document.getElementById("header-actions").style.display = "flex";
+
+  let name = "接続済み";
+  let email = "";
+  try{
+    // 汎用化: mine=true でログインしたユーザー自身のチャンネルを取得
+    const res = await fetch(`https://www.googleapis.com/youtube/v3/channels?part=snippet&mine=true`, {
+      headers: { Authorization: "Bearer " + accessToken }
+    });
+    const data = await res.json();
+    name = data.items?.[0]?.snippet?.title || "接続済み";
+  }catch(e){
+    // 取得失敗時もログイン自体は継続させる
+  }
+
+  try{
+    const res2 = await fetch("https://www.googleapis.com/oauth2/v3/userinfo", {
+      headers: { Authorization: "Bearer " + accessToken }
+    });
+    const info = await res2.json();
+    email = info.email || "";
+  }catch(e){ /* メール取得できなくても致命的ではない */ }
+
+  const initial = (name || "?").slice(0,1).toUpperCase();
+  document.getElementById("account-avatar").textContent = initial;
+  document.getElementById("account-name").textContent = name;
+  document.getElementById("account-email").textContent = email;
+  document.getElementById("settings-avatar").textContent = initial;
+  document.getElementById("settings-account-name").textContent = name;
+  document.getElementById("settings-account-email").textContent = email;
+
+  // チーム設定をLocalStorageから復元
+  const saved = loadLocalSettings();
+  if(saved.commonTitle) document.getElementById("common-title").value = saved.commonTitle;
+  if(typeof saved.seqEnabled === "boolean") document.getElementById("seq-enabled").checked = saved.seqEnabled;
+  if(saved.seqStart) document.getElementById("seq-start").value = saved.seqStart;
+
+  updatePaymentStatusDisplay();
+  loadPlaylists();
+  renderQueue();
+}
+
+/* ---------- 支払い状況（今回はダミー表示のみ。他者には見せず本人の設定画面/バッジのみに表示） ---------- */
+function updatePaymentStatusDisplay(){
+  // TODO: 将来的にStripe/Firebaseと連携し、実際の課金状態に置き換える
+  const state = "free"; // "free" | "paid" | "blocked"
+  const badge = document.getElementById("status-badge");
+  const map = {
+    free: { text: "無料期間中", cls: "free" },
+    paid: { text: "登録済み", cls: "paid" },
+    blocked: { text: "使用不可", cls: "blocked" }
+  };
+  const s = map[state];
+  badge.textContent = s.text;
+  badge.className = "status-badge " + s.cls;
+
+  const settingsCard = document.getElementById("settings-payment-card");
+  const settingsTitle = document.getElementById("settings-payment-title");
+  const settingsSub = document.getElementById("settings-payment-sub");
+  settingsCard.className = "settings-payment-card " + s.cls;
+  settingsTitle.className = "settings-payment-title " + s.cls;
+  settingsTitle.textContent = s.text;
+  settingsSub.textContent = state === "free" ? "あと12日で終了" : (state === "paid" ? "次回更新日: -" : "お支払いに問題があります");
+}
+
+/* ---------- 設定画面の表示切り替え ---------- */
+function showSettingsScreen(){
+  document.getElementById("main-screen").classList.add("hidden");
+  document.getElementById("settings-screen").classList.add("active");
+}
+function showMainScreen(){
+  document.getElementById("main-screen").classList.remove("hidden");
+  document.getElementById("settings-screen").classList.remove("active");
+}
+document.getElementById("settings-open-btn").addEventListener("click", showSettingsScreen);
+document.getElementById("settings-back-btn").addEventListener("click", showMainScreen);
+document.getElementById("settings-upgrade-btn").addEventListener("click", () => {
+  alert("決済ページへの接続は準備中です。もうしばらくお待ちください。");
+});
+
+/* ---------- 再生リスト ---------- */
+async function loadPlaylists(){
+  const sel = document.getElementById("playlist-select");
+  sel.innerHTML = `<option value="">読み込み中…</option>`;
+  try{
+    const res = await fetch(`https://www.googleapis.com/youtube/v3/playlists?part=snippet&mine=true&maxResults=50`, {
+      headers: { Authorization: "Bearer " + accessToken }
+    });
+    const data = await res.json();
+    sel.innerHTML = `<option value="">（追加しない）</option>`;
+    (data.items || []).forEach(pl => {
+      const opt = document.createElement("option");
+      opt.value = pl.id;
+      opt.textContent = pl.snippet.title;
+      sel.appendChild(opt);
+    });
+    const saved = loadLocalSettings();
+    if(saved.playlistId){
+      sel.value = saved.playlistId;
+    }
+  }catch(e){
+    sel.innerHTML = `<option value="">読み込みに失敗しました</option>`;
+  }
+}
+document.getElementById("reload-playlist-btn").addEventListener("click", loadPlaylists);
+
+document.getElementById("playlist-select").addEventListener("change", (e) => {
+  saveLocalSettings({ playlistId: e.target.value });
+});
+
+document.getElementById("new-playlist-btn").addEventListener("click", async () => {
+  if(isUploading) return;
+  const title = prompt("新しい再生リスト名を入力してください");
+  if(!title) return;
+  const btn = document.getElementById("new-playlist-btn");
+  btn.disabled = true;
+  btn.textContent = "作成中…";
+  try{
+    const res = await fetch("https://www.googleapis.com/youtube/v3/playlists?part=snippet,status", {
+      method: "POST",
+      headers: {
+        Authorization: "Bearer " + accessToken,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        snippet: { title: title },
+        status: { privacyStatus: "unlisted" }
+      })
+    });
+    const data = await res.json();
+    if(data.id){
+      await loadPlaylists();
+      document.getElementById("playlist-select").value = data.id;
+      saveLocalSettings({ playlistId: data.id });
+    }else{
+      alert("再生リストの作成に失敗しました");
+    }
+  }catch(e){
+    alert("再生リストの作成に失敗しました: " + e.message);
+  }
+  btn.disabled = false;
+  btn.textContent = "＋新規";
+});
+
+/* ---------- 公開設定トグル ---------- */
+document.querySelectorAll(".vis-btn").forEach(b => {
+  b.addEventListener("click", () => {
+    if(isUploading) return;
+    document.querySelectorAll(".vis-btn").forEach(x => x.classList.remove("selected"));
+    b.classList.add("selected");
+    currentVisibility = b.dataset.val;
+  });
+});
+
+/* ---------- 共通タイトル・連番 上部エリア ---------- */
+const commonTitleInput = document.getElementById("common-title");
+const seqEnabledInput = document.getElementById("seq-enabled");
+const seqStartInput = document.getElementById("seq-start");
+
+commonTitleInput.addEventListener("input", () => {
+  saveLocalSettings({ commonTitle: commonTitleInput.value });
+  renderQueue();
+});
+seqEnabledInput.addEventListener("change", () => {
+  saveLocalSettings({ seqEnabled: seqEnabledInput.checked });
+  renderQueue();
+});
+function clampSeqStart(){
+  let v = parseInt(seqStartInput.value || "1", 10);
+  if(isNaN(v) || v < 1) v = 1;
+  seqStartInput.value = v;
+  return v;
+}
+seqStartInput.addEventListener("input", () => {
+  const v = clampSeqStart();
+  saveLocalSettings({ seqStart: v });
+  reassignSequentialNumbers();
+  renderQueue();
+});
+document.getElementById("seq-start-minus").addEventListener("click", () => {
+  if(isUploading) return;
+  seqStartInput.value = Math.max(1, clampSeqStart() - 1);
+  saveLocalSettings({ seqStart: parseInt(seqStartInput.value, 10) });
+  reassignSequentialNumbers();
+  renderQueue();
+});
+document.getElementById("seq-start-plus").addEventListener("click", () => {
+  if(isUploading) return;
+  seqStartInput.value = clampSeqStart() + 1;
+  saveLocalSettings({ seqStart: parseInt(seqStartInput.value, 10) });
+  reassignSequentialNumbers();
+  renderQueue();
+});
+
+function reassignSequentialNumbers(){
+  const start = clampSeqStart();
+  // ロックされていない（実行前、または実行後でも一時スキップ中の）項目のみ連番を振り直す
+  let n = start;
+  selectedFiles.forEach(item => {
+    if(item.status === "waiting" || item.status === undefined || item.status === null){
+      // 実行前のみ自動採番。ロック後は個別カードの手動増減を尊重する
+      if(!item.locked){
+        item.seqNum = n;
+        n++;
+      }
+    }
+  });
+}
+
+/* ---------- ファイル選択 ---------- */
+const dropZone = document.getElementById("drop-zone");
+const fileInput = document.getElementById("file-input");
+
+dropZone.addEventListener("click", () => { if(!isUploading) fileInput.click(); });
+fileInput.addEventListener("change", (e) => addFiles(Array.from(e.target.files)));
+
+["dragover","dragenter"].forEach(evt => {
+  dropZone.addEventListener(evt, (e) => { e.preventDefault(); if(!isUploading) dropZone.classList.add("dragover"); });
+});
+["dragleave","drop"].forEach(evt => {
+  dropZone.addEventListener(evt, (e) => { e.preventDefault(); dropZone.classList.remove("dragover"); });
+});
+dropZone.addEventListener("drop", (e) => {
+  if(isUploading) return;
+  const files = Array.from(e.dataTransfer.files).filter(f => f.type.startsWith("video/"));
+  addFiles(files);
+});
+
+function getVideoDuration(file){
+  return new Promise((resolve) => {
+    const v = document.createElement("video");
+    v.preload = "metadata";
+    v.onloadedmetadata = () => {
+      URL.revokeObjectURL(v.src);
+      resolve(v.duration);
+    };
+    v.onerror = () => resolve(null);
+    v.src = URL.createObjectURL(file);
+  });
+}
+
+function formatDuration(sec){
+  if(sec == null || isNaN(sec)) return "--:--";
+  const m = Math.floor(sec / 60);
+  const s = Math.round(sec % 60);
+  return `${m}:${String(s).padStart(2,"0")}`;
+}
+function formatDateTime(ts){
+  const d = new Date(ts);
+  const pad = n => String(n).padStart(2,"0");
+  return `${d.getMonth()+1}/${d.getDate()} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+function formatSize(bytes){
+  const mb = bytes / (1024*1024);
+  if(mb >= 1024) return (mb/1024).toFixed(2) + "GB";
+  return Math.round(mb) + "MB";
+}
+
+async function addFiles(files){
+  if(files.length === 0) return;
+  const start = clampSeqStart();
+  const existingMaxSeq = selectedFiles.reduce((m, f) => Math.max(m, f.seqNum || 0), start - 1);
+  const newItems = files.map((file, i) => ({
+    file,
+    id: crypto.randomUUID(),
+    title: "",
+    seqNum: existingMaxSeq + i + 1,
+    duration: null,
+    modifiedAt: file.lastModified,
+    status: "waiting", // waiting | locked | uploading | done | error | skip-wait
+    locked: false,
+    errorDetail: null,
+    progress: 0
+  }));
+  selectedFiles.push(...newItems);
+  renderQueue();
+
+  for(const item of newItems){
+    const dur = await getVideoDuration(item.file);
+    item.duration = dur;
+    renderQueue();
+  }
+}
+
+function removeFile(id){
+  if(isUploading) return;
+  selectedFiles = selectedFiles.filter(f => f.id !== id);
+  renderQueue();
+}
+
+/* ---------- 並び替え（ドラッグ&ドロップ） ---------- */
+function handleDragStart(id){
+  if(isUploading) return;
+  draggingId = id;
+}
+function handleDragOverCard(e, overId){
+  e.preventDefault();
+  if(isUploading || !draggingId || draggingId === overId) return;
+  const fromIdx = selectedFiles.findIndex(f => f.id === draggingId);
+  const toIdx = selectedFiles.findIndex(f => f.id === overId);
+  if(fromIdx === -1 || toIdx === -1) return;
+  const item = selectedFiles.find(f => f.id === draggingId);
+  if(item.locked) return; // ロック済みは並び替え不可
+  const [moved] = selectedFiles.splice(fromIdx, 1);
+  selectedFiles.splice(toIdx, 0, moved);
+  renderQueue();
+}
+function handleDragEnd(){
+  draggingId = null;
+  renderQueue();
+}
+
+/* ---------- アップロード見込み時間 ---------- */
+function updateEstimate(){
+  const el = document.getElementById("upload-estimate");
+  if(selectedFiles.length === 0){
+    el.textContent = "動画を選択すると目安時間が表示されます。";
+    return;
+  }
+  const totalBytes = selectedFiles.reduce((s, f) => s + f.file.size, 0);
+  const totalMB = totalBytes / (1024*1024);
+  // 目安: 平均的な上り回線を想定し、1分あたり60MB程度を仮定した概算
+  const estMinutes = Math.max(1, Math.round(totalMB / 60));
+  el.textContent = `${selectedFiles.length}件・合計約${formatSize(totalBytes)}で、目安時間は約${estMinutes}分です。`;
+}
+
+/* ---------- 描画 ---------- */
+function renderQueue(){
+  const queue = document.getElementById("queue");
+  queue.innerHTML = "";
+  const commonTitle = commonTitleInput.value || "";
+  const seqOn = seqEnabledInput.checked;
+
+  selectedFiles.forEach((item) => {
+    const card = document.createElement("div");
+    card.className = "video-card";
+    if(item.locked) card.classList.add("locked");
+    if(item.status === "uploading") card.classList.add("uploading");
+    if(item.status === "skip-wait") card.classList.add("skip-wait");
+    if(item.status === "error") card.classList.add("error");
+    if(item.status === "done") card.classList.add("done");
+    card.dataset.id = item.id;
+    card.draggable = !item.locked && !isUploading;
+
+    card.addEventListener("dragstart", () => handleDragStart(item.id));
+    card.addEventListener("dragover", (e) => handleDragOverCard(e, item.id));
+    card.addEventListener("dragend", handleDragEnd);
+
+    const seqDisplay = seqOn ? item.seqNum : null;
+
+    let lockNoteHtml = "";
+    if(item.status === "locked"){
+      lockNoteHtml = `<div class="lock-note">🔒 待機中・編集不可</div>`;
+    }else if(item.status === "skip-wait"){
+      lockNoteHtml = `<div class="lock-note skip">⚠ 入力確定後にキューへ追加されます</div>`;
+    }
+
+    let statusHtml = "";
+    if(item.status === "uploading"){
+      statusHtml = `
+        <div class="progress-track"><div class="progress-fill" style="width:${item.progress}%"></div></div>
+        <div class="status-line">アップロード中… ${item.progress}%</div>
+      `;
+    }else if(item.status === "done"){
+      statusHtml = `<div class="status-line done">✓ 完了しました${item.playlistNote ? "（" + item.playlistNote + "）" : ""}</div>`;
+    }else if(item.status === "error"){
+      const detailId = "err-" + item.id;
+      statusHtml = `
+        <div class="status-line error">✕ アップロードに失敗しました</div>
+        <button type="button" class="error-detail-toggle" data-toggle-error="${item.id}">詳細を見る</button>
+        <div class="error-detail" id="${detailId}">${(item.errorDetail || "詳細情報がありません").replace(/</g,"&lt;")}</div>
+      `;
+    }
+
+    const disabledAttr = (item.locked || isUploading) ? "disabled" : "";
+    const dragDisabledCls = (item.locked || isUploading) ? "disabled" : "";
+
+    card.innerHTML = `
+      <div class="drag-handle ${dragDisabledCls}">⣿</div>
+      <div class="video-card-body">
+        <div class="card-top-row">
+          <div style="flex:1; min-width:0;">
+            <div class="video-fname">${item.file.name}</div>
+            <div class="video-meta">
+              <span>⏱ ${formatDuration(item.duration)}</span>
+              <span>📅 ${formatDateTime(item.modifiedAt)}</span>
+              <span>💾 ${formatSize(item.file.size)}</span>
+            </div>
+          </div>
+          <button class="video-remove" data-remove="${item.id}" ${disabledAttr}>✕</button>
+        </div>
+        <div class="title-preview">
+          <span class="fixed">${commonTitle}</span>
+          <input type="text" data-title="${item.id}" placeholder="個別タイトル（任意）" value="${item.title.replace(/"/g,'&quot;')}" ${disabledAttr}>
+          ${seqOn ? `
+          <div class="num-stepper">
+            <button type="button" class="stepper-btn mini-stepper-btn" data-seq-minus="${item.id}" ${disabledAttr}>−</button>
+            <input type="number" min="1" data-seq="${item.id}" value="${seqDisplay}" ${disabledAttr}>
+            <button type="button" class="stepper-btn mini-stepper-btn" data-seq-plus="${item.id}" ${disabledAttr}>＋</button>
+          </div>` : ``}
+        </div>
+        ${lockNoteHtml}
+        ${statusHtml}
+      </div>
+    `;
+    queue.appendChild(card);
+  });
+
+  // イベント再バインド
+  queue.querySelectorAll("[data-remove]").forEach(btn => {
+    btn.addEventListener("click", () => removeFile(btn.dataset.remove));
+  });
+  queue.querySelectorAll("[data-title]").forEach(inp => {
+    inp.addEventListener("focus", () => {
+      const item = selectedFiles.find(f => f.id === inp.dataset.title);
+      if(item) item.editing = true;
+    });
+    inp.addEventListener("blur", () => {
+      const item = selectedFiles.find(f => f.id === inp.dataset.title);
+      if(item){
+        item.editing = false;
+        finalizeSkippedItemIfReady(item);
+      }
+    });
+    inp.addEventListener("input", () => {
+      const item = selectedFiles.find(f => f.id === inp.dataset.title);
+      if(item) item.title = inp.value;
+    });
+  });
+  queue.querySelectorAll("[data-seq]").forEach(inp => {
+    inp.addEventListener("input", () => {
+      const item = selectedFiles.find(f => f.id === inp.dataset.seq);
+      if(item) item.seqNum = parseInt(inp.value || "1", 10);
+    });
+  });
+  queue.querySelectorAll("[data-seq-minus]").forEach(btn => {
+    btn.addEventListener("click", () => {
+      const item = selectedFiles.find(f => f.id === btn.dataset.seqMinus);
+      if(item){
+        item.seqNum = Math.max(1, (item.seqNum || 1) - 1);
+        renderQueue();
+      }
+    });
+  });
+  queue.querySelectorAll("[data-seq-plus]").forEach(btn => {
+    btn.addEventListener("click", () => {
+      const item = selectedFiles.find(f => f.id === btn.dataset.seqPlus);
+      if(item){
+        item.seqNum = (item.seqNum || 1) + 1;
+        renderQueue();
+      }
+    });
+  });
+  queue.querySelectorAll("[data-toggle-error]").forEach(btn => {
+    btn.addEventListener("click", () => {
+      const el = document.getElementById("err-" + btn.dataset.toggleError);
+      el.classList.toggle("expanded");
+      btn.textContent = el.classList.contains("expanded") ? "詳細を閉じる" : "詳細を見る";
+    });
+  });
+
+  updateEstimate();
+  updateUploadButton();
+}
+
+function updateUploadButton(){
+  const uploadBtn = document.getElementById("upload-btn");
+  if(isUploading){
+    return; // アップロード中の表示は別途 uploadAll 内で制御
+  }
+  if(selectedFiles.length === 0){
+    uploadBtn.disabled = true;
+    uploadBtn.textContent = "動画を選んでください";
+  }else{
+    uploadBtn.disabled = false;
+    uploadBtn.textContent = `${selectedFiles.length}件をアップロード`;
+  }
+}
+
+/* ---------- アップロード中の編集ロック仕様 ---------- */
+function finalizeSkippedItemIfReady(item){
+  if(item.status === "skip-wait" && !item.editing){
+    item.status = "waiting";
+    item.locked = true;
+    item.pendingUpload = true;
+    renderQueue();
+    processSkipQueueIfIdle();
+  }
+}
+
+let skipProcessing = false;
+async function processSkipQueueIfIdle(){
+  if(skipProcessing || !isUploading) return;
+  skipProcessing = true;
+  await runUploadLoop();
+  skipProcessing = false;
+}
+
+/* ---------- アップロード本体 ---------- */
+document.getElementById("upload-btn").addEventListener("click", startUpload);
+
+function startUpload(){
+  if(selectedFiles.length === 0 || isUploading) return;
+  isUploading = true;
+
+  // 実行の瞬間：編集中(未確定)だった項目だけスキップ扱いにし、それ以外は全件即ロック
+  selectedFiles.forEach(item => {
+    if(item.editing){
+      item.status = "skip-wait";
+      item.locked = false; // スキップ中はロック表示にしない（編集継続可能）
+    }else{
+      item.status = "waiting";
+      item.locked = true;
+    }
+  });
+
+  // 上部エリアもロック
+  commonTitleInput.disabled = true;
+  seqEnabledInput.disabled = true;
+  seqStartInput.disabled = true;
+  document.getElementById("seq-start-minus").disabled = true;
+  document.getElementById("seq-start-plus").disabled = true;
+  document.querySelectorAll(".vis-btn").forEach(b => b.disabled = true);
+  document.getElementById("new-playlist-btn").disabled = true;
+  document.getElementById("playlist-select").disabled = true;
+  dropZone.classList.add("locked");
+
+  const uploadBtn = document.getElementById("upload-btn");
+  uploadBtn.disabled = true;
+  uploadBtn.textContent = "アップロード中…";
+
+  renderQueue();
+  runUploadLoop();
+}
+
+async function runUploadLoop(){
+  const commonTitle = commonTitleInput.value || "";
+  const seqOn = seqEnabledInput.checked;
+  const playlistId = document.getElementById("playlist-select").value;
+
+  while(true){
+    const next = selectedFiles.find(f => f.locked && f.status === "waiting");
+    if(!next) break;
+    await uploadOne(next, commonTitle, seqOn, playlistId);
+  }
+
+  // すべて処理済み（waiting/uploadingが残っていなければ完了）
+  const stillPending = selectedFiles.some(f => f.status === "waiting" || f.status === "uploading" || f.status === "skip-wait");
+  if(!stillPending){
+    finishUpload();
+  }
+}
+
+function finishUpload(){
+  isUploading = false;
+  const uploadBtn = document.getElementById("upload-btn");
+  uploadBtn.textContent = "すべて完了しました";
+  uploadBtn.disabled = true;
+
+  commonTitleInput.disabled = false;
+  seqEnabledInput.disabled = false;
+  seqStartInput.disabled = false;
+  document.getElementById("seq-start-minus").disabled = false;
+  document.getElementById("seq-start-plus").disabled = false;
+  document.querySelectorAll(".vis-btn").forEach(b => b.disabled = false);
+  document.getElementById("new-playlist-btn").disabled = false;
+  document.getElementById("playlist-select").disabled = false;
+  dropZone.classList.remove("locked");
+}
+
+function buildTitle(item, commonTitle, seqOn){
+  const parts = [commonTitle];
+  if(item.title) parts.push(item.title);
+  let t = parts.join(" ").trim();
+  if(seqOn) t = `${t} ${item.seqNum}`.trim();
+  return t;
+}
+
+function uploadOne(item, commonTitle, seqOn, playlistId){
+  return new Promise((resolve) => {
+    item.status = "uploading";
+    item.progress = 0;
+    renderQueue();
+
+    const title = buildTitle(item, commonTitle, seqOn);
+    const metadata = {
+      snippet: { title: title, description: "" },
+      status: { privacyStatus: currentVisibility }
+    };
+
+    const xhrInit = new XMLHttpRequest();
+    xhrInit.open("POST", "https://www.googleapis.com/upload/youtube/v3/videos?uploadType=resumable&part=snippet,status");
+    xhrInit.setRequestHeader("Authorization", "Bearer " + accessToken);
+    xhrInit.setRequestHeader("Content-Type", "application/json; charset=UTF-8");
+    xhrInit.setRequestHeader("X-Upload-Content-Type", item.file.type || "video/mp4");
+    xhrInit.setRequestHeader("X-Upload-Content-Length", item.file.size);
+
+    xhrInit.onload = () => {
+      if(xhrInit.status !== 200){
+        item.status = "error";
+        item.errorDetail = `[初期化エラー] HTTP ${xhrInit.status}\n${xhrInit.responseText || ""}`;
+        renderQueue();
+        resolve();
+        return;
+      }
+      const uploadUrl = xhrInit.getResponseHeader("Location");
+      doUpload(uploadUrl, item, playlistId, resolve);
+    };
+    xhrInit.onerror = () => {
+      item.status = "error";
+      item.errorDetail = "[通信エラー] アップロード初期化リクエストが失敗しました（ネットワーク接続をご確認ください）";
+      renderQueue();
+      resolve();
+    };
+    xhrInit.send(JSON.stringify(metadata));
+  });
+}
+
+function doUpload(uploadUrl, item, playlistId, resolve){
+  const xhr = new XMLHttpRequest();
+  xhr.open("PUT", uploadUrl);
+  xhr.setRequestHeader("Content-Type", item.file.type || "video/mp4");
+
+  xhr.upload.onprogress = (e) => {
+    if(e.lengthComputable){
+      item.progress = Math.round((e.loaded / e.total) * 100);
+      renderQueue();
+    }
+  };
+
+  xhr.onload = async () => {
+    if(xhr.status === 200 || xhr.status === 201){
+      const video = JSON.parse(xhr.responseText);
+      item.progress = 100;
+
+      if(playlistId){
+        try{
+          await fetch("https://www.googleapis.com/youtube/v3/playlistItems?part=snippet", {
+            method: "POST",
+            headers: {
+              Authorization: "Bearer " + accessToken,
+              "Content-Type": "application/json"
+            },
+            body: JSON.stringify({
+              snippet: {
+                playlistId: playlistId,
+                resourceId: { kind: "youtube#video", videoId: video.id }
+              }
+            })
+          });
+          item.playlistNote = "再生リスト追加済み";
+        }catch(e){
+          item.playlistNote = "再生リスト追加は失敗";
+        }
+      }
+      item.status = "done";
+    }else{
+      item.status = "error";
+      item.errorDetail = `[アップロードエラー] HTTP ${xhr.status}\n${xhr.responseText || ""}`;
+    }
+    renderQueue();
+    resolve();
+  };
+  xhr.onerror = () => {
+    item.status = "error";
+    item.errorDetail = "[通信エラー] 動画データの送信中に接続が切れました";
+    renderQueue();
+    resolve();
+  };
+  xhr.send(item.file);
+}
+
+/* ---------- バージョン表示 ---------- */
+document.getElementById("version-label").textContent = `v${APP_VERSION}`;
+
+/* ---------- 起動 ---------- */
+initAuth();
+</script>
+
+</body>
+</html>
