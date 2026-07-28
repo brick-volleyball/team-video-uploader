@@ -624,7 +624,7 @@
     <div class="settings-payment-row">
       <div>
         <p class="settings-payment-title free" id="settings-payment-title">無料期間中</p>
-        <p class="settings-payment-sub" id="settings-payment-sub">あと12日で終了</p>
+        <p class="settings-payment-sub" id="settings-payment-sub">読み込み中…</p>
       </div>
       <span style="font-size:20px;">🎁</span>
     </div>
@@ -666,7 +666,7 @@ console.log(`team-video-uploader v${APP_VERSION}`);
 
 // team-video-uploader 用 OAuthクライアントID（Google Cloud Console: team-video-uploaderプロジェクトで発行）
 const CLIENT_ID = "551674365524-1qjh7ij42vd933gdns994gqckuglcmqb.apps.googleusercontent.com";
-const SCOPES = "https://www.googleapis.com/auth/youtube.force-ssl https://www.googleapis.com/auth/userinfo.email openid";
+const SCOPES = "https://www.googleapis.com/auth/youtube.force-ssl https://www.googleapis.com/auth/userinfo.email https://www.googleapis.com/auth/userinfo.profile openid";
 
 let accessToken = null;
 let tokenClient = null;
@@ -680,7 +680,7 @@ let maxRetryCount = 3; // 通信エラー時の自動リトライ上限回数（
 
 /* ---------- チーム設定の読み書き（Firestore） ----------
    構成: コレクション "teams" / ドキュメントID = ログインユーザーのuid
-   フィールド: commonTitle(保存しない・タイトルは毎回入力想定), seqEnabled, seqStart, playlistId, paymentStatus
+   フィールド: commonTitle(保存しない・タイトルは毎回入力想定), seqEnabled, seqStart, playlistId, paymentStatus, maxRetryCount, trialStartedAt
    paymentStatus は "free" | "paid" | "blocked"。Stripeとの自動連携はまだ無いため、
    運営者がFirebaseコンソールから手動で書き換える運用とする。
 */
@@ -788,15 +788,18 @@ async function onSignedIn(){
   document.getElementById("app-body").classList.add("active");
   document.getElementById("header-actions").style.display = "flex";
 
-  let name = "接続済み";
+  let name = "";
   let email = "";
+  let channelName = "";
+  let googleName = "";
+
   try{
     // 汎用化: mine=true でログインしたユーザー自身のチャンネルを取得
     const res = await fetch(`https://www.googleapis.com/youtube/v3/channels?part=snippet&mine=true`, {
       headers: { Authorization: "Bearer " + accessToken }
     });
     const data = await res.json();
-    name = data.items?.[0]?.snippet?.title || "接続済み";
+    channelName = data.items?.[0]?.snippet?.title || "";
   }catch(e){
     // 取得失敗時もログイン自体は継続させる
   }
@@ -807,8 +810,12 @@ async function onSignedIn(){
     });
     const info = await res2.json();
     email = info.email || "";
+    googleName = info.name || "";
     currentUid = info.sub || null; // Googleアカウントの一意なID。Firestoreのドキュメント名に使用
   }catch(e){ /* メール取得できなくても致命的ではない */ }
+
+  // 表示名の優先順位: YouTubeチャンネル名 → Googleアカウント名 → メールアドレス → 最終手段の固定文言
+  name = channelName || googleName || email || "接続済み";
 
   const initial = (name || "?").slice(0,1).toUpperCase();
   document.getElementById("account-avatar").textContent = initial;
@@ -827,20 +834,46 @@ async function onSignedIn(){
     document.getElementById("max-retry-count").value = maxRetryCount;
   }
 
-  updatePaymentStatusDisplay(saved.paymentStatus);
+  // トライアル開始日が未記録（初回ログイン、または既存ユーザーでまだ記録が無い場合）ならここで記録する
+  let trialStartedAt = saved.trialStartedAt;
+  if(!trialStartedAt){
+    trialStartedAt = Date.now();
+    saveLocalSettings({ trialStartedAt });
+  }
+
+  updatePaymentStatusDisplay(saved.paymentStatus, trialStartedAt);
   loadPlaylists();
   renderQueue();
 }
 
-/* ---------- 支払い状況（Firestoreの paymentStatus を表示。値は運営者が手動で更新） ---------- */
-function updatePaymentStatusDisplay(rawState){
+/* ---------- 支払い状況（Firestoreの paymentStatus を表示。値は運営者が手動で更新） ----------
+   トライアル期間はStripe側で14日間に設定。ここではtrialStartedAt（初回ログイン日時）から
+   残り日数を計算して表示するのみで、実際の課金停止・利用制限の判定は行わない（引き続き手動運用）。
+*/
+const TRIAL_DAYS = 14;
+function updatePaymentStatusDisplay(rawState, trialStartedAt){
   // Firestoreに値が無い場合は「無料期間中」を初期状態として扱う
   const state = (rawState === "paid" || rawState === "blocked") ? rawState : "free";
   currentPaymentStatus = state;
   updateUploadButton();
   const badge = document.getElementById("status-badge");
+
+  let freeSubText = "無料トライアル期間中です";
+  let freeBadgeText = "無料期間中";
+  if(state === "free" && trialStartedAt){
+    const elapsedDays = Math.floor((Date.now() - trialStartedAt) / (24 * 60 * 60 * 1000));
+    const remainingDays = TRIAL_DAYS - elapsedDays;
+    if(remainingDays > 0){
+      freeSubText = `無料トライアル残り${remainingDays}日（${TRIAL_DAYS}日間）`;
+      freeBadgeText = `無料期間中（残り${remainingDays}日）`;
+    }else{
+      freeSubText = "無料トライアル期間は終了しました。お支払い手続きをお願いします";
+      freeBadgeText = "トライアル終了";
+    }
+  }
+
   const map = {
-    free: { text: "無料期間中", cls: "free" },
+    free: { text: freeBadgeText, cls: "free" },
     paid: { text: "登録済み", cls: "paid" },
     blocked: { text: "使用不可", cls: "blocked" }
   };
@@ -855,7 +888,7 @@ function updatePaymentStatusDisplay(rawState){
   settingsTitle.className = "settings-payment-title " + s.cls;
   settingsTitle.textContent = s.text;
   settingsSub.textContent = state === "free"
-    ? "初月無料期間中です"
+    ? freeSubText
     : (state === "paid" ? "ご登録ありがとうございます" : "お支払いに問題があります。運営にお問い合わせください");
 }
 
