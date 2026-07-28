@@ -631,6 +631,21 @@
   </div>
   <button class="btn btn-ghost" id="settings-upgrade-btn" style="width:100%; text-align:center; margin-bottom:24px;">有料プランを今すぐ開始（月200円）</button>
 
+  <div class="settings-block-title">アップロード設定</div>
+  <div class="settings-card" style="padding:14px;">
+    <div style="display:flex; align-items:center; justify-content:space-between; gap:12px;">
+      <div style="min-width:0;">
+        <div style="font-size:13.5px;">最大リトライ回数</div>
+        <div style="font-size:11.5px; color:var(--mute-gray); margin-top:2px;">通信エラー時、自動で再送信する上限回数です</div>
+      </div>
+      <div class="num-stepper">
+        <button type="button" class="stepper-btn mini-stepper-btn" id="max-retry-minus">−</button>
+        <input type="number" min="0" max="10" id="max-retry-count" value="3" style="width:44px; text-align:center;">
+        <button type="button" class="stepper-btn mini-stepper-btn" id="max-retry-plus">＋</button>
+      </div>
+    </div>
+  </div>
+
   <div class="settings-block-title">アカウント</div>
   <div class="settings-card" style="padding:4px 14px;">
     <button class="btn-ghost" id="settings-signout-btn" style="width:100%; text-align:left; border:none; color:var(--error-red); padding:11px 0;">ログアウト</button>
@@ -660,6 +675,8 @@ let currentVisibility = "unlisted";
 let isUploading = false;
 let draggingId = null;
 let currentUid = null; // Googleユーザーの一意なID（Firestoreのドキュメント名として使用）
+let currentPaymentStatus = "free"; // "free" | "paid" | "blocked"。アップロード可否の判定に使用
+let maxRetryCount = 3; // 通信エラー時の自動リトライ上限回数（0〜10、デフォルト3）
 
 /* ---------- チーム設定の読み書き（Firestore） ----------
    構成: コレクション "teams" / ドキュメントID = ログインユーザーのuid
@@ -805,6 +822,10 @@ async function onSignedIn(){
   const saved = await loadLocalSettings();
   if(typeof saved.seqEnabled === "boolean") document.getElementById("seq-enabled").checked = saved.seqEnabled;
   if(saved.seqStart) document.getElementById("seq-start").value = saved.seqStart;
+  if(typeof saved.maxRetryCount === "number"){
+    maxRetryCount = clampMaxRetry(saved.maxRetryCount);
+    document.getElementById("max-retry-count").value = maxRetryCount;
+  }
 
   updatePaymentStatusDisplay(saved.paymentStatus);
   loadPlaylists();
@@ -815,6 +836,8 @@ async function onSignedIn(){
 function updatePaymentStatusDisplay(rawState){
   // Firestoreに値が無い場合は「無料期間中」を初期状態として扱う
   const state = (rawState === "paid" || rawState === "blocked") ? rawState : "free";
+  currentPaymentStatus = state;
+  updateUploadButton();
   const badge = document.getElementById("status-badge");
   const map = {
     free: { text: "無料期間中", cls: "free" },
@@ -849,9 +872,9 @@ function showMainScreen(){
 document.getElementById("settings-open-btn").addEventListener("click", showSettingsScreen);
 document.getElementById("settings-back-btn").addEventListener("click", showMainScreen);
 
-// Stripe Payment Links の本番環境URL（本番アカウントで決済リンクを発行後、ここを書き換える）
-// 例: "https://buy.stripe.com/xxxxxxxxxxxx"
-const STRIPE_PAYMENT_LINK = "https://buy.stripe.com/REPLACE_WITH_LIVE_LINK";
+// Stripe Payment Links の本番環境URL
+// team-video-uploader 月額利用料 ¥200/月（Liveモードで作成済み）
+const STRIPE_PAYMENT_LINK = "https://buy.stripe.com/9B66oz4Xrc8kaqTfgp4ZG00";
 
 document.getElementById("settings-upgrade-btn").addEventListener("click", () => {
   if(STRIPE_PAYMENT_LINK.includes("REPLACE_WITH_LIVE_LINK")){
@@ -981,6 +1004,30 @@ document.getElementById("seq-start-plus").addEventListener("click", () => {
   renderQueue();
 });
 
+/* ---------- 最大リトライ回数（設定画面） ---------- */
+const maxRetryInput = document.getElementById("max-retry-count");
+function clampMaxRetry(v){
+  let n = parseInt(v, 10);
+  if(isNaN(n) || n < 0) n = 0;
+  if(n > 10) n = 10;
+  return n;
+}
+maxRetryInput.addEventListener("input", () => {
+  maxRetryCount = clampMaxRetry(maxRetryInput.value);
+  maxRetryInput.value = maxRetryCount;
+  saveLocalSettings({ maxRetryCount });
+});
+document.getElementById("max-retry-minus").addEventListener("click", () => {
+  maxRetryCount = clampMaxRetry(maxRetryCount - 1);
+  maxRetryInput.value = maxRetryCount;
+  saveLocalSettings({ maxRetryCount });
+});
+document.getElementById("max-retry-plus").addEventListener("click", () => {
+  maxRetryCount = clampMaxRetry(maxRetryCount + 1);
+  maxRetryInput.value = maxRetryCount;
+  saveLocalSettings({ maxRetryCount });
+});
+
 function reassignSequentialNumbers(){
   const start = clampSeqStart();
   // ロックされていない（実行前、または実行後でも一時スキップ中の）項目のみ連番を振り直す
@@ -1001,7 +1048,13 @@ const dropZone = document.getElementById("drop-zone");
 const fileInput = document.getElementById("file-input");
 
 dropZone.addEventListener("click", () => { if(!isUploading) fileInput.click(); });
-fileInput.addEventListener("change", (e) => addFiles(Array.from(e.target.files)));
+fileInput.addEventListener("change", (e) => {
+  if(isUploading){
+    e.target.value = ""; // 選択状態をリセットしておく
+    return;
+  }
+  addFiles(Array.from(e.target.files));
+});
 
 ["dragover","dragenter"].forEach(evt => {
   dropZone.addEventListener(evt, (e) => { e.preventDefault(); if(!isUploading) dropZone.classList.add("dragover"); });
@@ -1059,7 +1112,13 @@ async function addFiles(files){
     status: "waiting", // waiting | locked | uploading | done | error | skip-wait
     locked: false,
     errorDetail: null,
-    progress: 0
+    progress: 0,
+    uploadUrl: null,     // resumable upload の送信先URL（初期化後に保持し、レジュームに使う）
+    bytesUploaded: 0,    // サーバーが受理済みのバイト数
+    retryCount: 0,       // 自動リトライを行った回数
+    playlistId: null,    // アップロード開始時点のplaylistIdを保持（途中で選択が変わっても一貫させる）
+    commonTitle: null,   // アップロード開始時点のタイトルを保持（再試行時に同じタイトルで送る）
+    seqOn: null
   }));
   selectedFiles.push(...newItems);
   renderQueue();
@@ -1154,9 +1213,15 @@ function renderQueue(){
       statusHtml = `<div class="status-line done">✓ 完了しました${item.playlistNote ? "（" + item.playlistNote + "）" : ""}</div>`;
     }else if(item.status === "error"){
       const detailId = "err-" + item.id;
+      const resumeNote = (item.bytesUploaded > 0 && item.bytesUploaded < item.file.size)
+        ? `（${item.progress}%まで送信済み・続きから再送します）`
+        : "";
       statusHtml = `
-        <div class="status-line error">✕ アップロードに失敗しました</div>
-        <button type="button" class="error-detail-toggle" data-toggle-error="${item.id}">詳細を見る</button>
+        <div class="status-line error">✕ アップロードに失敗しました${resumeNote}</div>
+        <div style="display:flex; gap:8px; align-items:center; margin-top:6px;">
+          <button type="button" class="btn btn-ghost retry-btn" data-retry="${item.id}" style="padding:6px 14px; font-size:12.5px;">↻ 再試行</button>
+          <button type="button" class="error-detail-toggle" data-toggle-error="${item.id}">詳細を見る</button>
+        </div>
         <div class="error-detail" id="${detailId}">${(item.errorDetail || "詳細情報がありません").replace(/</g,"&lt;")}</div>
       `;
     }
@@ -1247,6 +1312,13 @@ function renderQueue(){
       btn.textContent = el.classList.contains("expanded") ? "詳細を閉じる" : "詳細を見る";
     });
   });
+  queue.querySelectorAll("[data-retry]").forEach(btn => {
+    btn.addEventListener("click", () => {
+      btn.disabled = true;
+      btn.textContent = "再試行中…";
+      retryUpload(btn.dataset.retry);
+    });
+  });
 
   updateEstimate();
   updateUploadButton();
@@ -1256,6 +1328,11 @@ function updateUploadButton(){
   const uploadBtn = document.getElementById("upload-btn");
   if(isUploading){
     return; // アップロード中の表示は別途 uploadAll 内で制御
+  }
+  if(currentPaymentStatus === "blocked"){
+    uploadBtn.disabled = true;
+    uploadBtn.textContent = "お支払いをご確認ください";
+    return;
   }
   if(selectedFiles.length === 0){
     uploadBtn.disabled = true;
@@ -1290,6 +1367,10 @@ document.getElementById("upload-btn").addEventListener("click", startUpload);
 
 function startUpload(){
   if(selectedFiles.length === 0 || isUploading) return;
+  if(currentPaymentStatus === "blocked"){
+    alert("お支払いに問題があるため、現在アップロードをご利用いただけません。設定画面からお支払い状況をご確認ください。");
+    return;
+  }
 
   // タイトルが実質空になってしまう項目がないか事前チェック
   const commonTitleVal = commonTitleInput.value.trim();
@@ -1374,6 +1455,78 @@ function finishUpload(){
   dropZone.classList.remove("locked");
 }
 
+// resumable uploadのチャンクサイズ（256KBの倍数を推奨。ここでは8MB）
+const UPLOAD_CHUNK_SIZE = 8 * 1024 * 1024;
+// 自動リトライ間の待機時間（指数バックオフの基準値、ミリ秒）
+const RETRY_BASE_DELAY_MS = 1000;
+
+function sleep(ms){
+  return new Promise(res => setTimeout(res, ms));
+}
+
+// アップロード開始時にitemへ初期化情報をセットする（初回のみ・再試行時はスキップ）
+function uploadOne(item, commonTitle, seqOn, playlistId){
+  item.status = "uploading";
+  item.progress = 0;
+  item.commonTitle = commonTitle;
+  item.seqOn = seqOn;
+  item.playlistId = playlistId;
+  item.retryCount = 0;
+  renderQueue();
+  return runUploadForItem(item);
+}
+
+// エラー後の手動「再試行」から呼ばれる。既存のuploadUrl/bytesUploadedがあれば続きから再開する
+function retryUpload(itemId){
+  const item = selectedFiles.find(f => f.id === itemId);
+  if(!item || item.status !== "error") return;
+
+  // 他に処理待ちが残っている（＝まだ全体のアップロードループが動いている）場合は
+  // waiting状態に戻すだけでrunUploadLoopに合流させる。単独エラーだけの場合はここで直接処理する。
+  const otherPending = selectedFiles.some(f => f.id !== item.id && (f.status === "waiting" || f.status === "uploading" || f.status === "skip-wait"));
+
+  item.errorDetail = null;
+  item.retryCount = 0; // 手動再試行なので自動リトライ回数はリセット
+
+  if(otherPending && isUploading){
+    item.status = "waiting";
+    item.locked = true;
+    renderQueue();
+    return; // runUploadLoopが自然に拾う
+  }
+
+  // 単独での再試行：ロック状態を再現してから処理する
+  isUploading = true;
+  item.status = "uploading";
+  document.getElementById("upload-btn").disabled = true;
+  document.getElementById("upload-btn").textContent = "アップロード中…";
+  dropZone.classList.add("locked");
+  renderQueue();
+
+  runUploadForItem(item).then(() => {
+    const stillPending = selectedFiles.some(f => f.status === "waiting" || f.status === "uploading" || f.status === "skip-wait");
+    if(!stillPending){
+      finishUpload();
+    }
+  });
+}
+
+async function runUploadForItem(item){
+  // uploadUrlが無ければ新規に初期化（無ければ動画データを送れないため）
+  if(!item.uploadUrl){
+    const initResult = await initResumableUpload(item);
+    if(!initResult.ok){
+      item.status = "error";
+      item.errorDetail = initResult.errorDetail;
+      renderQueue();
+      return;
+    }
+    item.uploadUrl = initResult.uploadUrl;
+  }
+
+  await uploadChunksWithRetry(item);
+}
+
 function buildTitle(item, commonTitle, seqOn){
   const parts = [commonTitle];
   if(item.title) parts.push(item.title);
@@ -1382,13 +1535,9 @@ function buildTitle(item, commonTitle, seqOn){
   return t;
 }
 
-function uploadOne(item, commonTitle, seqOn, playlistId){
+function initResumableUpload(item){
   return new Promise((resolve) => {
-    item.status = "uploading";
-    item.progress = 0;
-    renderQueue();
-
-    const title = buildTitle(item, commonTitle, seqOn);
+    const title = buildTitle(item, item.commonTitle, item.seqOn);
     const metadata = {
       snippet: { title: title, description: "" },
       status: { privacyStatus: currentVisibility }
@@ -1403,77 +1552,155 @@ function uploadOne(item, commonTitle, seqOn, playlistId){
 
     xhrInit.onload = () => {
       if(xhrInit.status !== 200){
-        item.status = "error";
-        item.errorDetail = `[初期化エラー] HTTP ${xhrInit.status}\n${xhrInit.responseText || ""}`;
-        renderQueue();
-        resolve();
+        resolve({ ok: false, errorDetail: `[初期化エラー] HTTP ${xhrInit.status}\n${xhrInit.responseText || ""}` });
         return;
       }
       const uploadUrl = xhrInit.getResponseHeader("Location");
-      doUpload(uploadUrl, item, playlistId, resolve);
+      resolve({ ok: true, uploadUrl });
     };
     xhrInit.onerror = () => {
-      item.status = "error";
-      item.errorDetail = "[通信エラー] アップロード初期化リクエストが失敗しました（ネットワーク接続をご確認ください）";
-      renderQueue();
-      resolve();
+      resolve({ ok: false, errorDetail: "[通信エラー] アップロード初期化リクエストが失敗しました（ネットワーク接続をご確認ください）" });
     };
     xhrInit.send(JSON.stringify(metadata));
   });
 }
 
-function doUpload(uploadUrl, item, playlistId, resolve){
-  const xhr = new XMLHttpRequest();
-  xhr.open("PUT", uploadUrl);
-  xhr.setRequestHeader("Content-Type", item.file.type || "video/mp4");
-
-  xhr.upload.onprogress = (e) => {
-    if(e.lengthComputable){
-      item.progress = Math.round((e.loaded / e.total) * 100);
-      renderQueue();
-    }
-  };
-
-  xhr.onload = async () => {
-    if(xhr.status === 200 || xhr.status === 201){
-      const video = JSON.parse(xhr.responseText);
-      item.progress = 100;
-
-      if(playlistId){
-        try{
-          await fetch("https://www.googleapis.com/youtube/v3/playlistItems?part=snippet", {
-            method: "POST",
-            headers: {
-              Authorization: "Bearer " + accessToken,
-              "Content-Type": "application/json"
-            },
-            body: JSON.stringify({
-              snippet: {
-                playlistId: playlistId,
-                resourceId: { kind: "youtube#video", videoId: video.id }
-              }
-            })
-          });
-          item.playlistNote = "再生リスト追加済み";
-        }catch(e){
-          item.playlistNote = "再生リスト追加は失敗";
+// サーバーに「どこまで受信済みか」を問い合わせる（Content-Range: bytes */total を送るとYouTube側の仕様で判明する）
+function queryUploadedRange(item){
+  return new Promise((resolve) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open("PUT", item.uploadUrl);
+    xhr.setRequestHeader("Content-Range", `bytes */${item.file.size}`);
+    xhr.onload = () => {
+      if(xhr.status === 308){
+        const range = xhr.getResponseHeader("Range"); // 例: "bytes=0-1048575"
+        if(range){
+          const match = /bytes=0-(\d+)/.exec(range);
+          resolve({ ok: true, bytesUploaded: match ? parseInt(match[1], 10) + 1 : 0 });
+        }else{
+          // Rangeヘッダーが無い＝まだ1バイトも受信されていない
+          resolve({ ok: true, bytesUploaded: 0 });
         }
+      }else if(xhr.status === 200 || xhr.status === 201){
+        // 実は既に完了していたケース
+        resolve({ ok: true, complete: true, body: xhr.responseText });
+      }else{
+        resolve({ ok: false, status: xhr.status, body: xhr.responseText });
       }
-      item.status = "done";
-    }else{
-      item.status = "error";
-      item.errorDetail = `[アップロードエラー] HTTP ${xhr.status}\n${xhr.responseText || ""}`;
+    };
+    xhr.onerror = () => resolve({ ok: false, status: 0, body: "" });
+    xhr.send();
+  });
+}
+
+// 1チャンク分をPUT送信する
+function putChunk(item, start, end){
+  return new Promise((resolve) => {
+    const chunk = item.file.slice(start, end);
+    const xhr = new XMLHttpRequest();
+    xhr.open("PUT", item.uploadUrl);
+    xhr.setRequestHeader("Content-Range", `bytes ${start}-${end - 1}/${item.file.size}`);
+
+    xhr.upload.onprogress = (e) => {
+      if(e.lengthComputable){
+        const uploadedNow = start + e.loaded;
+        item.progress = Math.round((uploadedNow / item.file.size) * 100);
+        renderQueue();
+      }
+    };
+
+    xhr.onload = () => {
+      if(xhr.status === 308){
+        // 続きがある。正常なチャンク受理
+        item.bytesUploaded = end;
+        resolve({ ok: true, done: false });
+      }else if(xhr.status === 200 || xhr.status === 201){
+        // 最終チャンクが受理され、動画作成が完了
+        item.bytesUploaded = item.file.size;
+        resolve({ ok: true, done: true, body: xhr.responseText });
+      }else{
+        resolve({ ok: false, status: xhr.status, body: xhr.responseText });
+      }
+    };
+    xhr.onerror = () => resolve({ ok: false, status: 0, body: "" });
+    xhr.send(chunk);
+  });
+}
+
+// チャンクを最後まで送信し、失敗時は自動リトライ（バックオフ＋レジューム）する
+async function uploadChunksWithRetry(item){
+  while(item.bytesUploaded < item.file.size){
+    // アイテムが途中で削除されていたら中断
+    if(!selectedFiles.some(f => f.id === item.id)) return;
+
+    const start = item.bytesUploaded;
+    const end = Math.min(start + UPLOAD_CHUNK_SIZE, item.file.size);
+    const result = await putChunk(item, start, end);
+
+    if(result.ok){
+      item.retryCount = 0; // 送信が一度成功したらリトライカウントをリセット
+      if(result.done){
+        await handleUploadComplete(item, result.body);
+        return;
+      }
+      continue;
     }
-    renderQueue();
-    resolve();
-  };
-  xhr.onerror = () => {
+
+    // 失敗：自動リトライ上限内であれば、受信済みバイト数を問い合わせてから再送
+    if(item.retryCount < maxRetryCount){
+      item.retryCount++;
+      const delay = RETRY_BASE_DELAY_MS * Math.pow(2, item.retryCount - 1);
+      item.errorDetail = `[再送信待機中] ${item.retryCount}/${maxRetryCount}回目のリトライを${Math.round(delay/1000)}秒後に行います（HTTP ${result.status || "通信エラー"}）`;
+      renderQueue();
+      await sleep(delay);
+
+      const rangeCheck = await queryUploadedRange(item);
+      if(rangeCheck.ok){
+        if(rangeCheck.complete){
+          await handleUploadComplete(item, rangeCheck.body);
+          return;
+        }
+        item.bytesUploaded = rangeCheck.bytesUploaded;
+      }
+      // rangeCheckが失敗した場合はbytesUploadedを変更せず、次のループで同じ位置から再送を試みる
+      item.errorDetail = null;
+      continue;
+    }
+
+    // 自動リトライ上限に到達：エラー状態にして手動再試行を待つ（uploadUrl・bytesUploadedは保持する）
     item.status = "error";
-    item.errorDetail = "[通信エラー] 動画データの送信中に接続が切れました";
+    item.errorDetail = `[アップロードエラー] HTTP ${result.status || "通信エラー"}\n${result.body || ""}\n\n自動リトライの上限（${maxRetryCount}回）に達しました。「再試行」ボタンで続きから再送できます。`;
     renderQueue();
-    resolve();
-  };
-  xhr.send(item.file);
+    return;
+  }
+}
+
+async function handleUploadComplete(item, responseBody){
+  const video = JSON.parse(responseBody);
+  item.progress = 100;
+
+  if(item.playlistId){
+    try{
+      await fetch("https://www.googleapis.com/youtube/v3/playlistItems?part=snippet", {
+        method: "POST",
+        headers: {
+          Authorization: "Bearer " + accessToken,
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          snippet: {
+            playlistId: item.playlistId,
+            resourceId: { kind: "youtube#video", videoId: video.id }
+          }
+        })
+      });
+      item.playlistNote = "再生リスト追加済み";
+    }catch(e){
+      item.playlistNote = "再生リスト追加は失敗";
+    }
+  }
+  item.status = "done";
+  renderQueue();
 }
 
 /* ---------- バージョン表示 ---------- */
