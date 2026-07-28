@@ -5,6 +5,26 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
 <title>動画アップローダー</title>
 <meta name="theme-color" content="#1a2332">
+<script type="module">
+  // Firebase SDK (CDN / モジュール版)
+  import { initializeApp } from "https://www.gstatic.com/firebasejs/12.16.0/firebase-app.js";
+  import { getFirestore, doc, getDoc, setDoc } from "https://www.gstatic.com/firebasejs/12.16.0/firebase-firestore.js";
+
+  const firebaseConfig = {
+    apiKey: "AIzaSyCn0rLPeyN_hw3_LLaYw1UMAzsSK3DpxuM",
+    authDomain: "team-video-uploader-503720.firebaseapp.com",
+    projectId: "team-video-uploader-503720",
+    storageBucket: "team-video-uploader-503720.firebasestorage.app",
+    messagingSenderId: "551674365524",
+    appId: "1:551674365524:web:f67d5524bc0b3ccec70fc1"
+  };
+
+  const fbApp = initializeApp(firebaseConfig);
+  const db = getFirestore(fbApp);
+
+  // グローバルスコープの通常スクリプトから呼べるように公開
+  window.__firestore = { db, doc, getDoc, setDoc };
+</script>
 <style>
   :root{
     --court-navy: #1a2332;
@@ -633,31 +653,71 @@ console.log(`team-video-uploader v${APP_VERSION}`);
 const CLIENT_ID = "551674365524-1qjh7ij42vd933gdns994gqckuglcmqb.apps.googleusercontent.com";
 const SCOPES = "https://www.googleapis.com/auth/youtube.force-ssl";
 
-const LS_KEY = "video_uploader_settings_v1";
-
 let accessToken = null;
 let tokenClient = null;
 let selectedFiles = []; // {file, id, title, seqNum, duration, modifiedAt, status, errorDetail, progress}
 let currentVisibility = "unlisted";
 let isUploading = false;
 let draggingId = null;
+let currentUid = null; // Googleユーザーの一意なID（Firestoreのドキュメント名として使用）
 
-/* ---------- ローカル設定の読み書き（暫定。将来的にFirebase等へ） ---------- */
-function loadLocalSettings(){
+/* ---------- チーム設定の読み書き（Firestore） ----------
+   構成: コレクション "teams" / ドキュメントID = ログインユーザーのuid
+   フィールド: commonTitle(保存しない・タイトルは毎回入力想定), seqEnabled, seqStart, playlistId, paymentStatus
+   paymentStatus は "free" | "paid" | "blocked"。Stripeとの自動連携はまだ無いため、
+   運営者がFirebaseコンソールから手動で書き換える運用とする。
+*/
+let settingsCache = {}; // 直近に読み込んだ設定のメモリキャッシュ（同期参照用）
+
+// type="module"スクリプトは非同期に実行されるため、window.__firestoreが
+// まだセットされていない場合に備えて、最大2秒ほど待機してから利用する
+function waitForFirestore(timeoutMs = 2000){
+  return new Promise((resolve) => {
+    const start = Date.now();
+    (function check(){
+      if(window.__firestore){
+        resolve(window.__firestore);
+      }else if(Date.now() - start > timeoutMs){
+        resolve(null); // タイムアウト時はnullを返し、呼び出し側でフォールバック
+      }else{
+        setTimeout(check, 50);
+      }
+    })();
+  });
+}
+
+async function loadLocalSettings(){
+  if(!currentUid) return settingsCache || {};
+  const fb = await waitForFirestore();
+  if(!fb) return settingsCache || {};
   try{
-    const raw = localStorage.getItem(LS_KEY);
-    if(!raw) return {};
-    return JSON.parse(raw);
+    const { db, doc, getDoc } = fb;
+    const ref = doc(db, "teams", currentUid);
+    const snap = await getDoc(ref);
+    if(snap.exists()){
+      settingsCache = snap.data();
+    }else{
+      settingsCache = {};
+    }
+    return settingsCache;
   }catch(e){
-    return {};
+    console.warn("チーム設定の読み込みに失敗しました（Firestore）", e);
+    return settingsCache || {};
   }
 }
-function saveLocalSettings(patch){
-  const cur = loadLocalSettings();
-  const next = { ...cur, ...patch };
+
+async function saveLocalSettings(patch){
+  settingsCache = { ...settingsCache, ...patch };
+  if(!currentUid) return; // 未ログイン時は書き込みしない
+  const fb = await waitForFirestore();
+  if(!fb) return;
   try{
-    localStorage.setItem(LS_KEY, JSON.stringify(next));
-  }catch(e){ /* 保存できなくても致命的ではないため無視 */ }
+    const { db, doc, setDoc } = fb;
+    const ref = doc(db, "teams", currentUid);
+    await setDoc(ref, patch, { merge: true });
+  }catch(e){
+    console.warn("チーム設定の保存に失敗しました（Firestore）", e);
+  }
 }
 
 /* ---------- GIS 読み込み ---------- */
@@ -730,6 +790,7 @@ async function onSignedIn(){
     });
     const info = await res2.json();
     email = info.email || "";
+    currentUid = info.sub || null; // Googleアカウントの一意なID。Firestoreのドキュメント名に使用
   }catch(e){ /* メール取得できなくても致命的ではない */ }
 
   const initial = (name || "?").slice(0,1).toUpperCase();
@@ -740,21 +801,20 @@ async function onSignedIn(){
   document.getElementById("settings-account-name").textContent = name;
   document.getElementById("settings-account-email").textContent = email;
 
-  // チーム設定をLocalStorageから復元
-  const saved = loadLocalSettings();
-  if(saved.commonTitle) document.getElementById("common-title").value = saved.commonTitle;
+  // チーム設定をFirestoreから復元（共通タイトルは毎回入力する方針のため復元しない）
+  const saved = await loadLocalSettings();
   if(typeof saved.seqEnabled === "boolean") document.getElementById("seq-enabled").checked = saved.seqEnabled;
   if(saved.seqStart) document.getElementById("seq-start").value = saved.seqStart;
 
-  updatePaymentStatusDisplay();
+  updatePaymentStatusDisplay(saved.paymentStatus);
   loadPlaylists();
   renderQueue();
 }
 
-/* ---------- 支払い状況（今回はダミー表示のみ。他者には見せず本人の設定画面/バッジのみに表示） ---------- */
-function updatePaymentStatusDisplay(){
-  // TODO: 将来的にStripe/Firebaseと連携し、実際の課金状態に置き換える
-  const state = "free"; // "free" | "paid" | "blocked"
+/* ---------- 支払い状況（Firestoreの paymentStatus を表示。値は運営者が手動で更新） ---------- */
+function updatePaymentStatusDisplay(rawState){
+  // Firestoreに値が無い場合は「無料期間中」を初期状態として扱う
+  const state = (rawState === "paid" || rawState === "blocked") ? rawState : "free";
   const badge = document.getElementById("status-badge");
   const map = {
     free: { text: "無料期間中", cls: "free" },
@@ -771,8 +831,11 @@ function updatePaymentStatusDisplay(){
   settingsCard.className = "settings-payment-card " + s.cls;
   settingsTitle.className = "settings-payment-title " + s.cls;
   settingsTitle.textContent = s.text;
-  settingsSub.textContent = state === "free" ? "あと12日で終了" : (state === "paid" ? "次回更新日: -" : "お支払いに問題があります");
+  settingsSub.textContent = state === "free"
+    ? "初月無料期間中です"
+    : (state === "paid" ? "ご登録ありがとうございます" : "お支払いに問題があります。運営にお問い合わせください");
 }
+
 
 /* ---------- 設定画面の表示切り替え ---------- */
 function showSettingsScreen(){
@@ -805,9 +868,9 @@ async function loadPlaylists(){
       opt.textContent = pl.snippet.title;
       sel.appendChild(opt);
     });
-    const saved = loadLocalSettings();
-    if(saved.playlistId){
-      sel.value = saved.playlistId;
+    // 既に読み込み済みのチーム設定キャッシュから復元（onSignedIn時にFirestoreから取得済み）
+    if(settingsCache.playlistId){
+      sel.value = settingsCache.playlistId;
     }
   }catch(e){
     sel.innerHTML = `<option value="">読み込みに失敗しました</option>`;
@@ -869,7 +932,7 @@ const seqEnabledInput = document.getElementById("seq-enabled");
 const seqStartInput = document.getElementById("seq-start");
 
 commonTitleInput.addEventListener("input", () => {
-  saveLocalSettings({ commonTitle: commonTitleInput.value });
+  // 共通タイトル（試合日等が入ることが多い）は保存対象外。都度入力してもらう方針
   renderQueue();
 });
 seqEnabledInput.addEventListener("change", () => {
