@@ -848,8 +848,23 @@ function showMainScreen(){
 }
 document.getElementById("settings-open-btn").addEventListener("click", showSettingsScreen);
 document.getElementById("settings-back-btn").addEventListener("click", showMainScreen);
+
+// Stripe Payment Links の本番環境URL（本番アカウントで決済リンクを発行後、ここを書き換える）
+// 例: "https://buy.stripe.com/xxxxxxxxxxxx"
+const STRIPE_PAYMENT_LINK = "https://buy.stripe.com/REPLACE_WITH_LIVE_LINK";
+
 document.getElementById("settings-upgrade-btn").addEventListener("click", () => {
-  alert("決済ページへの接続は準備中です。もうしばらくお待ちください。");
+  if(STRIPE_PAYMENT_LINK.includes("REPLACE_WITH_LIVE_LINK")){
+    alert("決済ページへの接続は準備中です。もうしばらくお待ちください。");
+    return;
+  }
+  // client_reference_id にFirestore側のuidを乗せておくと、
+  // Stripe側の管理画面で「どのGoogleアカウントからの支払いか」を後から照合しやすくなる
+  const url = new URL(STRIPE_PAYMENT_LINK);
+  if(currentUid){
+    url.searchParams.set("client_reference_id", currentUid);
+  }
+  window.open(url.toString(), "_blank");
 });
 
 /* ---------- 再生リスト ---------- */
