@@ -8,7 +8,7 @@
 <script type="module">
   // Firebase SDK (CDN / モジュール版)
   import { initializeApp } from "https://www.gstatic.com/firebasejs/12.16.0/firebase-app.js";
-  import { getFirestore, doc, getDoc, setDoc } from "https://www.gstatic.com/firebasejs/12.16.0/firebase-firestore.js";
+  import { getFirestore, doc, getDoc, setDoc, collection, getDocs } from "https://www.gstatic.com/firebasejs/12.16.0/firebase-firestore.js";
   import { getAuth, GoogleAuthProvider, signInWithCredential, signOut } from "https://www.gstatic.com/firebasejs/12.16.0/firebase-auth.js";
 
   const firebaseConfig = {
@@ -25,7 +25,7 @@
   const auth = getAuth(fbApp);
 
   // グローバルスコープの通常スクリプトから呼べるように公開
-  window.__firestore = { db, doc, getDoc, setDoc };
+  window.__firestore = { db, doc, getDoc, setDoc, collection, getDocs };
   window.__firebaseAuth = { auth, GoogleAuthProvider, signInWithCredential, signOut };
 </script>
 <style>
@@ -456,6 +456,57 @@
   #settings-screen.active{ display:block; }
   #main-screen.hidden{ display:none; }
 
+  #admin-screen{
+    display:none;
+    max-width: 640px;
+    margin: 0 auto;
+    padding: 0 16px;
+  }
+  #admin-screen.active{ display:block; }
+  .admin-team-card{
+    background: var(--card-bg, #1c2733);
+    border: 1px solid var(--border-col, #2a3644);
+    border-radius: 10px;
+    padding: 14px;
+    margin-bottom: 10px;
+  }
+  .admin-team-row{
+    display:flex;
+    justify-content:space-between;
+    align-items:flex-start;
+    gap:10px;
+    margin-bottom:10px;
+  }
+  .admin-team-badge{
+    font-size:11.5px;
+    padding:3px 9px;
+    border-radius:999px;
+    white-space:nowrap;
+  }
+  .admin-team-badge.free{ background:rgba(52,199,89,0.15); color:#34c759; }
+  .admin-team-badge.trial-ending{ background:rgba(255,159,10,0.15); color:#ff9f0a; }
+  .admin-team-badge.paid{ background:rgba(10,132,255,0.15); color:#0a84ff; }
+  .admin-team-badge.blocked{ background:rgba(255,69,58,0.15); color:#ff453a; }
+  .admin-status-btn-group{
+    display:flex;
+    gap:6px;
+  }
+  .admin-status-btn{
+    flex:1;
+    font-size:12px;
+    padding:7px 0;
+    border-radius:7px;
+    border:1px solid var(--border-col, #2a3644);
+    background:transparent;
+    color:inherit;
+    cursor:pointer;
+  }
+  .admin-status-btn.current{
+    border-color:#0a84ff;
+    background:rgba(10,132,255,0.15);
+    font-weight:600;
+  }
+
   .settings-header{
     display:flex; align-items:center; gap:10px;
     margin-top: 20px; margin-bottom: 20px;
@@ -649,9 +700,26 @@
     </div>
   </div>
 
+  <div id="admin-menu-block" style="display:none;">
+    <div class="settings-block-title">管理者メニュー</div>
+    <div class="settings-card" style="padding:4px 14px;">
+      <button class="btn-ghost" id="admin-open-btn" style="width:100%; text-align:left; border:none; padding:11px 0;">チーム管理（トライアル・支払い状況）</button>
+    </div>
+  </div>
+
   <div class="settings-block-title">アカウント</div>
   <div class="settings-card" style="padding:4px 14px;">
     <button class="btn-ghost" id="settings-signout-btn" style="width:100%; text-align:left; border:none; color:var(--error-red); padding:11px 0;">ログアウト</button>
+  </div>
+</div>
+
+<div id="admin-screen">
+  <div class="settings-header">
+    <button class="icon-btn" id="admin-back-btn" aria-label="戻る">←</button>
+    <h1>チーム管理</h1>
+  </div>
+  <div id="admin-team-list" style="padding:0 4px;">
+    <div style="color:var(--mute-gray); font-size:13px; padding:20px 0; text-align:center;">読み込み中…</div>
   </div>
 </div>
 
@@ -678,6 +746,8 @@ let currentVisibility = "unlisted";
 let isUploading = false;
 let draggingId = null;
 let currentUid = null; // Firebase AuthのユーザーUID（Firestoreのドキュメント名として使用。Stripeのclient_reference_idにも渡す）
+// 管理者（つくはさん・BRICKアカウント）のFirebase AuthのUID。管理ビューの表示可否判定に使用
+const ADMIN_UID = "Zc3Xtji9dIdYSH2xANg1EpCkEfE3";
 let currentPaymentStatus = "free"; // "free" | "paid" | "blocked"。アップロード可否の判定に使用
 let maxRetryCount = 3; // 通信エラー時の自動リトライ上限回数（0〜10、デフォルト3）
 
@@ -803,6 +873,7 @@ async function doSignOut(){
   document.getElementById("auth-card").style.display = "block";
   document.getElementById("app-body").classList.remove("active");
   document.getElementById("header-actions").style.display = "none";
+  document.getElementById("admin-menu-block").style.display = "none";
   showMainScreen();
 }
 document.getElementById("settings-signout-btn").addEventListener("click", doSignOut);
@@ -885,6 +956,9 @@ async function onSignedIn(){
   updatePaymentStatusDisplay(saved.paymentStatus, trialStartedAt);
   loadPlaylists();
   renderQueue();
+
+  // 管理者（つくはさん）のアカウントであれば「チーム管理」メニューを表示する
+  document.getElementById("admin-menu-block").style.display = (currentUid === ADMIN_UID) ? "block" : "none";
 }
 
 /* ---------- 支払い状況（Firestoreの paymentStatus を表示。値は運営者が手動で更新） ----------
@@ -942,9 +1016,124 @@ function showSettingsScreen(){
 function showMainScreen(){
   document.getElementById("main-screen").classList.remove("hidden");
   document.getElementById("settings-screen").classList.remove("active");
+  document.getElementById("admin-screen").classList.remove("active");
 }
 document.getElementById("settings-open-btn").addEventListener("click", showSettingsScreen);
 document.getElementById("settings-back-btn").addEventListener("click", showMainScreen);
+
+/* ---------- 管理者用チーム管理ビュー ---------- */
+function showAdminScreen(){
+  document.getElementById("main-screen").classList.add("hidden");
+  document.getElementById("settings-screen").classList.remove("active");
+  document.getElementById("admin-screen").classList.add("active");
+  loadAdminTeamList();
+}
+function backToSettingsFromAdmin(){
+  document.getElementById("admin-screen").classList.remove("active");
+  document.getElementById("settings-screen").classList.add("active");
+}
+document.getElementById("admin-open-btn").addEventListener("click", showAdminScreen);
+document.getElementById("admin-back-btn").addEventListener("click", backToSettingsFromAdmin);
+
+async function loadAdminTeamList(){
+  const listEl = document.getElementById("admin-team-list");
+  listEl.innerHTML = `<div style="color:var(--mute-gray); font-size:13px; padding:20px 0; text-align:center;">読み込み中…</div>`;
+
+  const fb = await waitForFirestore();
+  if(!fb){
+    listEl.innerHTML = `<div style="color:var(--error-red); font-size:13px; padding:20px 0; text-align:center;">Firestoreへの接続に失敗しました</div>`;
+    return;
+  }
+
+  let teams = [];
+  try{
+    const snap = await fb.getDocs(fb.collection(fb.db, "teams"));
+    snap.forEach(docSnap => {
+      teams.push({ id: docSnap.id, ...docSnap.data() });
+    });
+  }catch(e){
+    listEl.innerHTML = `<div style="color:var(--error-red); font-size:13px; padding:20px 0; text-align:center;">一覧の取得に失敗しました（権限設定をご確認ください）</div>`;
+    console.error(e);
+    return;
+  }
+
+  if(teams.length === 0){
+    listEl.innerHTML = `<div style="color:var(--mute-gray); font-size:13px; padding:20px 0; text-align:center;">チームがまだ登録されていません</div>`;
+    return;
+  }
+
+  // トライアル残日数が少ない（＝対応が急がれる）順にソート。paidは末尾、blockedは残日数計算せず先頭寄りに
+  teams.forEach(t => {
+    if(typeof t.trialStartedAt === "number"){
+      const elapsedDays = Math.floor((Date.now() - t.trialStartedAt) / (24 * 60 * 60 * 1000));
+      t._remainingDays = TRIAL_DAYS - elapsedDays;
+    }else{
+      t._remainingDays = null;
+    }
+  });
+  teams.sort((a, b) => {
+    const rank = s => s === "blocked" ? 0 : (s === "free" ? 1 : 2); // blocked, free, paidの順
+    const ra = rank(a.paymentStatus || "free");
+    const rb = rank(b.paymentStatus || "free");
+    if(ra !== rb) return ra - rb;
+    const da = a._remainingDays === null ? 999 : a._remainingDays;
+    const db_ = b._remainingDays === null ? 999 : b._remainingDays;
+    return da - db_;
+  });
+
+  listEl.innerHTML = "";
+  teams.forEach(team => {
+    const status = (team.paymentStatus === "paid" || team.paymentStatus === "blocked") ? team.paymentStatus : "free";
+    let badgeCls = status;
+    let badgeText = status === "paid" ? "登録済み" : (status === "blocked" ? "使用不可" : "無料期間中");
+    if(status === "free" && team._remainingDays !== null){
+      if(team._remainingDays > 0){
+        badgeText = `残り${team._remainingDays}日`;
+        if(team._remainingDays <= 3) badgeCls = "trial-ending";
+      }else{
+        badgeText = "トライアル終了";
+        badgeCls = "trial-ending";
+      }
+    }
+
+    const card = document.createElement("div");
+    card.className = "admin-team-card";
+    card.innerHTML = `
+      <div class="admin-team-row">
+        <div style="min-width:0;">
+          <div style="font-size:13.5px; font-weight:600; overflow-wrap:anywhere;">${(team.id || "").slice(0,10)}…</div>
+          <div style="font-size:11.5px; color:var(--mute-gray); margin-top:2px;">
+            ${team._remainingDays !== null ? `トライアル開始から${TRIAL_DAYS - team._remainingDays > 0 ? TRIAL_DAYS - team._remainingDays : 0}日経過` : "トライアル情報なし"}
+          </div>
+        </div>
+        <span class="admin-team-badge ${badgeCls}">${badgeText}</span>
+      </div>
+      <div class="admin-status-btn-group">
+        <button type="button" class="admin-status-btn ${status === "free" ? "current" : ""}" data-set-status="free" data-team="${team.id}">無料</button>
+        <button type="button" class="admin-status-btn ${status === "paid" ? "current" : ""}" data-set-status="paid" data-team="${team.id}">登録済み</button>
+        <button type="button" class="admin-status-btn ${status === "blocked" ? "current" : ""}" data-set-status="blocked" data-team="${team.id}">使用不可</button>
+      </div>
+    `;
+    listEl.appendChild(card);
+  });
+
+  listEl.querySelectorAll("[data-set-status]").forEach(btn => {
+    btn.addEventListener("click", async () => {
+      const teamId = btn.dataset.team;
+      const newStatus = btn.dataset.setStatus;
+      btn.disabled = true;
+      try{
+        const ref = fb.doc(fb.db, "teams", teamId);
+        await fb.setDoc(ref, { paymentStatus: newStatus }, { merge: true });
+        await loadAdminTeamList(); // 一覧を再読み込みして反映
+      }catch(e){
+        alert("更新に失敗しました。通信環境をご確認のうえ再度お試しください。");
+        console.error(e);
+        btn.disabled = false;
+      }
+    });
+  });
+}
 
 // Stripe Payment Links の本番環境URL
 // team-video-uploader 月額利用料 ¥200/月（Liveモードで作成済み）
