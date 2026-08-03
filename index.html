@@ -866,6 +866,38 @@ function loadGis(){
   });
 }
 
+/* ---------- アクセストークンの一時保存（毎回のログイン操作を省くため） ----------
+   Googleのアクセストークンは通常1時間程度で失効するため、これは「二度とログイン不要」ではなく
+   「有効期限内であれば自動でログイン状態を復元する」ための仕組み。
+   サーバーを持たない構成のためリフレッシュトークンは扱えず、期限が切れれば再度手動ログインが必要。
+*/
+const TOKEN_STORAGE_KEY = "tvu_access_token";
+// Google側の実際の失効より少し手前で「切れた」とみなし、失効直後の失敗を避ける安全マージン
+const TOKEN_EXPIRY_SAFETY_MARGIN_MS = 60 * 1000;
+
+function saveAccessToken(token, expiresInSeconds){
+  try{
+    const expiresAt = Date.now() + (expiresInSeconds * 1000) - TOKEN_EXPIRY_SAFETY_MARGIN_MS;
+    localStorage.setItem(TOKEN_STORAGE_KEY, JSON.stringify({ token, expiresAt }));
+  }catch(e){ /* 保存できなくても致命的ではない（次回また手動ログインすればよい） */ }
+}
+
+function loadValidAccessToken(){
+  try{
+    const raw = localStorage.getItem(TOKEN_STORAGE_KEY);
+    if(!raw) return null;
+    const data = JSON.parse(raw);
+    if(!data || !data.token || Date.now() >= data.expiresAt) return null;
+    return data.token;
+  }catch(e){
+    return null;
+  }
+}
+
+function clearSavedAccessToken(){
+  try{ localStorage.removeItem(TOKEN_STORAGE_KEY); }catch(e){ /* 無視 */ }
+}
+
 async function initAuth(){
   await loadGis();
   tokenClient = google.accounts.oauth2.initTokenClient({
@@ -877,12 +909,20 @@ async function initAuth(){
         return;
       }
       accessToken = resp.access_token;
+      saveAccessToken(accessToken, resp.expires_in);
       onSignedIn();
     }
   });
   const btn = document.getElementById("signin-btn");
   btn.disabled = false;
   btn.textContent = "Googleでログイン";
+
+  // 有効期限内のトークンが残っていれば、ログイン操作なしで自動的に復元する
+  const savedToken = loadValidAccessToken();
+  if(savedToken){
+    accessToken = savedToken;
+    onSignedIn();
+  }
 }
 
 document.getElementById("signin-btn").addEventListener("click", () => {
@@ -895,6 +935,7 @@ async function doSignOut(){
   }
   accessToken = null;
   currentUid = null;
+  clearSavedAccessToken();
   try{
     const fbAuth = await waitForFirebaseAuth(500);
     if(fbAuth && fbAuth.auth.currentUser) await fbAuth.signOut(fbAuth.auth);
@@ -931,6 +972,7 @@ async function onSignedIn(){
   let email = "";
   let channelName = "";
   let googleName = "";
+  let userinfoOk = false;
 
   try{
     // 汎用化: mine=true でログインしたユーザー自身のチャンネルを取得
@@ -947,13 +989,24 @@ async function onSignedIn(){
     const res2 = await fetch("https://www.googleapis.com/oauth2/v3/userinfo", {
       headers: { Authorization: "Bearer " + accessToken }
     });
+    if(res2.status === 401){
+      // 保存されていたトークンが失効・無効化されている。自動ログインを諦めて手動ログイン画面に戻す
+      clearSavedAccessToken();
+      accessToken = null;
+      currentUid = null;
+      document.getElementById("auth-card").style.display = "block";
+      document.getElementById("app-body").classList.remove("active");
+      document.getElementById("header-actions").style.display = "none";
+      return;
+    }
     const info = await res2.json();
     email = info.email || "";
     googleName = info.name || "";
+    userinfoOk = true;
     // currentUidはFirebase Authサインインが成功していればそちらを優先。
     // 失敗時（オフライン等）のみGoogleのsubにフォールバックする
     if(!currentUid) currentUid = info.sub || null;
-  }catch(e){ /* メール取得できなくても致命的ではない */ }
+  }catch(e){ /* メール取得できなくても致命的ではない（ネットワーク断など） */ }
 
   // 表示名の優先順位: YouTubeチャンネル名 → Googleアカウント名 → メールアドレス → 最終手段の固定文言
   name = channelName || googleName || email || "接続済み";
