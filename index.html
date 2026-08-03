@@ -1624,7 +1624,7 @@ function renderQueue(){
           <button type="button" class="btn btn-ghost retry-btn" data-retry="${item.id}" style="padding:6px 14px; font-size:12.5px;">↻ 再試行</button>
           <button type="button" class="error-detail-toggle" data-toggle-error="${item.id}">詳細を見る</button>
         </div>
-        <div class="error-detail" id="${detailId}">${(item.errorDetail || "詳細情報がありません").replace(/</g,"&lt;")}</div>
+        <div class="error-detail" id="${detailId}">${escapeHtml(item.errorDetail || "詳細情報がありません")}</div>
       `;
     }
 
@@ -1636,7 +1636,7 @@ function renderQueue(){
       <div class="video-card-body">
         <div class="card-top-row">
           <div style="flex:1; min-width:0;">
-            <div class="video-fname">${item.file.name}</div>
+            <div class="video-fname">${escapeHtml(item.file.name)}</div>
             <div class="video-meta">
               <span>⏱ ${formatDuration(item.duration)}</span>
               <span>📅 ${formatDateTime(item.modifiedAt)}</span>
@@ -1646,8 +1646,8 @@ function renderQueue(){
           <button class="video-remove" data-remove="${item.id}" ${disabledAttr}>✕</button>
         </div>
         <div class="title-preview">
-          <span class="fixed">${commonTitle}</span>
-          <input type="text" data-title="${item.id}" placeholder="個別タイトル（任意）" value="${item.title.replace(/"/g,'&quot;')}" ${disabledAttr}>
+          <span class="fixed">${escapeHtml(commonTitle)}</span>
+          <input type="text" data-title="${item.id}" placeholder="個別タイトル（任意）" value="${escapeHtml(item.title)}" ${disabledAttr}>
           ${seqOn ? `
           <div class="num-stepper">
             <button type="button" class="stepper-btn mini-stepper-btn" data-seq-minus="${item.id}" ${disabledAttr}>−</button>
