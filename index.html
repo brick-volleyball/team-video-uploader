@@ -233,6 +233,33 @@
     font-size:11px; color:var(--mute-gray); margin: -4px 0 10px;
   }
 
+  #resume-banner{
+    background: rgba(10,132,255,0.12);
+    border: 1px solid rgba(10,132,255,0.4);
+    border-radius: 10px;
+    padding: 12px 14px;
+    margin: 14px 0;
+    font-size: 12.5px;
+    line-height: 1.6;
+  }
+  #resume-banner .resume-title{
+    font-weight: 600;
+    margin-bottom: 4px;
+  }
+  #resume-banner .resume-item{
+    color: var(--mute-gray);
+    overflow-wrap: anywhere;
+  }
+  #resume-banner .resume-dismiss{
+    margin-top: 8px;
+    background: none;
+    border: none;
+    color: #0a84ff;
+    font-size: 12px;
+    cursor: pointer;
+    padding: 0;
+  }
+
   .drop-zone{
     border: 2px dashed var(--border-soft);
     border-radius: 14px;
@@ -610,6 +637,8 @@
       </div>
     </div>
 
+    <div id="resume-banner" style="display:none;"></div>
+
     <div class="section-title">1. 動画を選ぶ</div>
     <div class="drop-zone" id="drop-zone">
       <div class="icon">🎬</div>
@@ -965,9 +994,34 @@ async function onSignedIn(){
   updatePaymentStatusDisplay(saved.paymentStatus, trialStartedAt);
   loadPlaylists();
   renderQueue();
+  showResumeBannerIfNeeded();
 
   // 管理者（つくはさん）のアカウントであれば「チーム管理」メニューを表示する
   document.getElementById("admin-menu-block").style.display = (currentUid === ADMIN_UID) ? "block" : "none";
+}
+
+// ページ読み込み時、前回中断されたアップロードがあれば通知バナーを表示する
+function showResumeBannerIfNeeded(){
+  const banner = document.getElementById("resume-banner");
+  const states = loadResumeStates();
+  if(states.length === 0){
+    banner.style.display = "none";
+    return;
+  }
+  const itemsHtml = states.map(s => {
+    const pct = Math.round((s.bytesUploaded / s.fileSize) * 100);
+    return `<div class="resume-item">・${escapeHtml(s.fileName)}（${pct}%まで送信済み）</div>`;
+  }).join("");
+  banner.innerHTML = `
+    <div class="resume-title">↻ 前回中断されたアップロードがあります</div>
+    ${itemsHtml}
+    <div style="margin-top:6px;">同じファイルをもう一度選択すると、続きから自動的に再開します。</div>
+    <button type="button" class="resume-dismiss" id="resume-dismiss-btn">この通知を消す</button>
+  `;
+  banner.style.display = "block";
+  document.getElementById("resume-dismiss-btn").addEventListener("click", () => {
+    banner.style.display = "none";
+  });
 }
 
 /* ---------- 支払い状況（Firestoreの paymentStatus を表示。値は運営者が手動で更新） ----------
@@ -1385,24 +1439,28 @@ async function addFiles(files){
   if(files.length === 0) return;
   const start = clampSeqStart();
   const existingMaxSeq = selectedFiles.reduce((m, f) => Math.max(m, f.seqNum || 0), start - 1);
-  const newItems = files.map((file, i) => ({
-    file,
-    id: crypto.randomUUID(),
-    title: "",
-    seqNum: existingMaxSeq + i + 1,
-    duration: null,
-    modifiedAt: file.lastModified,
-    status: "waiting", // waiting | locked | uploading | done | error | skip-wait
-    locked: false,
-    errorDetail: null,
-    progress: 0,
-    uploadUrl: null,     // resumable upload の送信先URL（初期化後に保持し、レジュームに使う）
-    bytesUploaded: 0,    // サーバーが受理済みのバイト数
-    retryCount: 0,       // 自動リトライを行った回数
-    playlistId: null,    // アップロード開始時点のplaylistIdを保持（途中で選択が変わっても一貫させる）
-    commonTitle: null,   // アップロード開始時点のタイトルを保持（再試行時に同じタイトルで送る）
-    seqOn: null
-  }));
+  const newItems = files.map((file, i) => {
+    // 前回セッションの続きのファイルであれば、送信済みバイト数・アップロード先URLを復元する
+    const resumeState = findResumeStateForFile(file);
+    return {
+      file,
+      id: crypto.randomUUID(),
+      title: "",
+      seqNum: existingMaxSeq + i + 1,
+      duration: null,
+      modifiedAt: file.lastModified,
+      status: "waiting", // waiting | locked | uploading | done | error | skip-wait
+      locked: false,
+      errorDetail: null,
+      progress: resumeState ? Math.round((resumeState.bytesUploaded / file.size) * 100) : 0,
+      uploadUrl: resumeState ? resumeState.uploadUrl : null,
+      bytesUploaded: resumeState ? resumeState.bytesUploaded : 0,
+      retryCount: 0,       // 自動リトライを行った回数
+      playlistId: null,    // アップロード開始時点のplaylistIdを保持（途中で選択が変わっても一貫させる）
+      commonTitle: null,   // アップロード開始時点のタイトルを保持（再試行時に同じタイトルで送る）
+      seqOn: null
+    };
+  });
   selectedFiles.push(...newItems);
   renderQueue();
 
@@ -1414,7 +1472,10 @@ async function addFiles(files){
 }
 
 function removeFile(id){
+
   if(isUploading) return;
+  const target = selectedFiles.find(f => f.id === id);
+  if(target && target.uploadUrl) clearResumeState(target.uploadUrl);
   selectedFiles = selectedFiles.filter(f => f.id !== id);
   renderQueue();
 }
@@ -1491,6 +1552,11 @@ function renderQueue(){
       statusHtml = `
         <div class="progress-track"><div class="progress-fill" style="width:${item.progress}%"></div></div>
         <div class="status-line">アップロード中… ${item.progress}%</div>
+      `;
+    }else if(item.status === "waiting" && item.uploadUrl && item.bytesUploaded > 0){
+      // リロード跨ぎで前回の続きが検出された項目
+      statusHtml = `
+        <div class="status-line" style="color:#0a84ff;">↻ 前回の続き（${item.progress}%送信済み）から再開します</div>
       `;
     }else if(item.status === "done"){
       statusHtml = `<div class="status-line done">✓ 完了しました${item.playlistNote ? "（" + item.playlistNote + "）" : ""}</div>`;
@@ -1742,15 +1808,77 @@ function finishUpload(){
 const UPLOAD_CHUNK_SIZE = 8 * 1024 * 1024;
 // 自動リトライ間の待機時間（指数バックオフの基準値、ミリ秒）
 const RETRY_BASE_DELAY_MS = 1000;
+// YouTubeのresumable uploadセッションURLの目安有効期限（24時間）。
+// これを超えた情報はどうせ使えないため、レジューム候補としては表示しない
+const RESUME_SESSION_MAX_AGE_MS = 24 * 60 * 60 * 1000;
+const RESUME_STORAGE_KEY = "tvu_resumable_uploads";
 
 function sleep(ms){
   return new Promise(res => setTimeout(res, ms));
 }
 
+/* ---------- リロード跨ぎのレジューム情報をlocalStorageに永続化 ---------- */
+function loadResumeStates(){
+  try{
+    const raw = localStorage.getItem(RESUME_STORAGE_KEY);
+    if(!raw) return [];
+    const list = JSON.parse(raw);
+    if(!Array.isArray(list)) return [];
+    // 有効期限切れのエントリはこの時点で除外する
+    const now = Date.now();
+    return list.filter(e => e && (now - e.savedAt) < RESUME_SESSION_MAX_AGE_MS);
+  }catch(e){
+    return [];
+  }
+}
+
+function saveResumeStates(list){
+  try{
+    localStorage.setItem(RESUME_STORAGE_KEY, JSON.stringify(list));
+  }catch(e){
+    // ストレージ容量超過等は致命的ではないため無視（レジュームできないだけ）
+  }
+}
+
+// アイテムの現在の送信状況をlocalStorageに書き込む（ファイル名・サイズ・更新日時で同一性判定するためのキー情報も保存）
+function persistResumeState(item){
+  if(!item.uploadUrl || item.bytesUploaded <= 0 || item.bytesUploaded >= item.file.size) return;
+  const list = loadResumeStates().filter(e => e.uploadUrl !== item.uploadUrl);
+  list.push({
+    fileName: item.file.name,
+    fileSize: item.file.size,
+    fileModifiedAt: item.file.lastModified,
+    uploadUrl: item.uploadUrl,
+    bytesUploaded: item.bytesUploaded,
+    savedAt: Date.now()
+  });
+  saveResumeStates(list);
+}
+
+// アップロード完了・キャンセル・削除時に、対応するレジューム情報を消す
+function clearResumeState(uploadUrl){
+  if(!uploadUrl) return;
+  const list = loadResumeStates().filter(e => e.uploadUrl !== uploadUrl);
+  saveResumeStates(list);
+}
+
+// 選択されたファイルと一致するレジューム情報があれば返す（無ければnull）
+function findResumeStateForFile(file){
+  const list = loadResumeStates();
+  return list.find(e =>
+    e.fileName === file.name &&
+    e.fileSize === file.size &&
+    e.fileModifiedAt === file.lastModified
+  ) || null;
+}
+
 // アップロード開始時にitemへ初期化情報をセットする（初回のみ・再試行時はスキップ）
 function uploadOne(item, commonTitle, seqOn, playlistId){
   item.status = "uploading";
-  item.progress = 0;
+  // リロード跨ぎで送信済みバイト数を引き継いでいる場合は、進捗表示を0%に戻さない
+  item.progress = (item.bytesUploaded > 0 && item.file.size > 0)
+    ? Math.round((item.bytesUploaded / item.file.size) * 100)
+    : 0;
   item.commonTitle = commonTitle;
   item.seqOn = seqOn;
   item.playlistId = playlistId;
@@ -1896,6 +2024,7 @@ function putChunk(item, start, end){
       if(xhr.status === 308){
         // 続きがある。正常なチャンク受理
         item.bytesUploaded = end;
+        persistResumeState(item); // リロード跨ぎレジューム用に進捗を保存
         resolve({ ok: true, done: false });
       }else if(xhr.status === 200 || xhr.status === 201){
         // 最終チャンクが受理され、動画作成が完了
@@ -1961,6 +2090,7 @@ async function uploadChunksWithRetry(item){
 async function handleUploadComplete(item, responseBody){
   const video = JSON.parse(responseBody);
   item.progress = 100;
+  clearResumeState(item.uploadUrl); // 完了したのでレジューム候補からは除外する
 
   if(item.playlistId){
     try{
