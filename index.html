@@ -753,7 +753,7 @@ let maxRetryCount = 3; // 通信エラー時の自動リトライ上限回数（
 
 /* ---------- チーム設定の読み書き（Firestore） ----------
    構成: コレクション "teams" / ドキュメントID = ログインユーザーのuid
-   フィールド: commonTitle(保存しない・タイトルは毎回入力想定), seqEnabled, seqStart, playlistId, paymentStatus, maxRetryCount, trialStartedAt
+   フィールド: commonTitle(保存しない・タイトルは毎回入力想定), seqEnabled, seqStart, playlistId, paymentStatus, maxRetryCount, trialStartedAt, email
    paymentStatus は "free" | "paid" | "blocked"。Stripeとの自動連携はまだ無いため、
    運営者がFirebaseコンソールから手動で書き換える運用とする。
 */
@@ -948,9 +948,18 @@ async function onSignedIn(){
 
   // トライアル開始日が未記録（初回ログイン、または既存ユーザーでまだ記録が無い場合）ならここで記録する
   let trialStartedAt = saved.trialStartedAt;
+  const patchOnLogin = {};
   if(!trialStartedAt){
     trialStartedAt = Date.now();
-    saveLocalSettings({ trialStartedAt });
+    patchOnLogin.trialStartedAt = trialStartedAt;
+  }
+  // メールアドレスは変わる可能性があるため、保存済みの値と異なる場合は毎回上書きする
+  // （管理者用チーム管理画面で、UIDの代わりにメールアドレスを表示するために使用）
+  if(email && saved.email !== email){
+    patchOnLogin.email = email;
+  }
+  if(Object.keys(patchOnLogin).length > 0){
+    saveLocalSettings(patchOnLogin);
   }
 
   updatePaymentStatusDisplay(saved.paymentStatus, trialStartedAt);
@@ -1022,6 +1031,16 @@ document.getElementById("settings-open-btn").addEventListener("click", showSetti
 document.getElementById("settings-back-btn").addEventListener("click", showMainScreen);
 
 /* ---------- 管理者用チーム管理ビュー ---------- */
+// innerHTMLに動的な文字列（メールアドレス等）を埋め込む前に必ず通す
+function escapeHtml(str){
+  return String(str ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
 function showAdminScreen(){
   document.getElementById("main-screen").classList.add("hidden");
   document.getElementById("settings-screen").classList.remove("active");
@@ -1098,10 +1117,11 @@ async function loadAdminTeamList(){
 
     const card = document.createElement("div");
     card.className = "admin-team-card";
+    const displayLabel = team.email ? escapeHtml(team.email) : `${escapeHtml((team.id || "").slice(0,10))}…（メール未登録）`;
     card.innerHTML = `
       <div class="admin-team-row">
         <div style="min-width:0;">
-          <div style="font-size:13.5px; font-weight:600; overflow-wrap:anywhere;">${(team.id || "").slice(0,10)}…</div>
+          <div style="font-size:13.5px; font-weight:600; overflow-wrap:anywhere;">${displayLabel}</div>
           <div style="font-size:11.5px; color:var(--mute-gray); margin-top:2px;">
             ${team._remainingDays !== null ? `トライアル開始から${TRIAL_DAYS - team._remainingDays > 0 ? TRIAL_DAYS - team._remainingDays : 0}日経過` : "トライアル情報なし"}
           </div>
