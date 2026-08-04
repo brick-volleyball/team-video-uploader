@@ -779,6 +779,7 @@ let currentUid = null; // Firebase AuthのユーザーUID（Firestoreのドキ�
 // 管理者（つくはさん・BRICKアカウント）のFirebase AuthのUID。管理ビューの表示可否判定に使用
 const ADMIN_UID = "Zc3Xtji9dIdYSH2xANg1EpCkEfE3";
 let currentPaymentStatus = "free"; // "free" | "paid" | "blocked"。アップロード可否の判定に使用
+let currentTrialExpired = false; // trueなら、free状態かつ14日のトライアルを経過済み（アップロード不可の判定に使用）
 let maxRetryCount = 3; // 通信エラー時の自動リトライ上限回数（0〜10、デフォルト3）
 
 /* ---------- チーム設定の読み書き（Firestore） ----------
@@ -1079,22 +1080,22 @@ function showResumeBannerIfNeeded(){
 }
 
 /* ---------- 支払い状況（Firestoreの paymentStatus を表示。値は運営者が手動で更新） ----------
-   トライアル期間はStripe側で14日間に設定。ここではtrialStartedAt（初回ログイン日時）から
-   残り日数を計算して表示するのみで、実際の課金停止・利用制限の判定は行わない（引き続き手動運用）。
+   トライアル期間はStripe側・アプリ側ともに14日間に統一。trialStartedAt（初回ログイン日時）から
+   14日を経過し、かつpaymentStatusがpaidでない場合はアップロードをブロックする。
+   paidへの切り替えはStripeの決済確認後、運営者がFirestoreを手動更新して行う。
 */
 const TRIAL_DAYS = 14;
 function updatePaymentStatusDisplay(rawState, trialStartedAt){
   // Firestoreに値が無い場合は「無料期間中」を初期状態として扱う
   const state = (rawState === "paid" || rawState === "blocked") ? rawState : "free";
   currentPaymentStatus = state;
-  updateUploadButton();
-  const badge = document.getElementById("status-badge");
 
   let freeSubText = "無料トライアル期間中です";
   let freeBadgeText = "無料期間中";
+  let remainingDays = null;
   if(state === "free" && trialStartedAt){
     const elapsedDays = Math.floor((Date.now() - trialStartedAt) / (24 * 60 * 60 * 1000));
-    const remainingDays = TRIAL_DAYS - elapsedDays;
+    remainingDays = TRIAL_DAYS - elapsedDays;
     if(remainingDays > 0){
       freeSubText = `無料トライアル残り${remainingDays}日（${TRIAL_DAYS}日間）`;
       freeBadgeText = `無料期間中（残り${remainingDays}日）`;
@@ -1103,6 +1104,10 @@ function updatePaymentStatusDisplay(rawState, trialStartedAt){
       freeBadgeText = "トライアル終了";
     }
   }
+  // free状態で、かつトライアル開始日が分かっていて14日を経過している場合のみアップロードをブロックする
+  currentTrialExpired = (state === "free" && remainingDays !== null && remainingDays <= 0);
+  updateUploadButton();
+  const badge = document.getElementById("status-badge");
 
   const map = {
     free: { text: freeBadgeText, cls: "free" },
@@ -1737,6 +1742,11 @@ function updateUploadButton(){
     uploadBtn.textContent = "お支払いをご確認ください";
     return;
   }
+  if(currentTrialExpired){
+    uploadBtn.disabled = true;
+    uploadBtn.textContent = "無料期間が終了しました";
+    return;
+  }
   if(selectedFiles.length === 0){
     uploadBtn.disabled = true;
     uploadBtn.textContent = "動画を選んでください";
@@ -1772,6 +1782,10 @@ function startUpload(){
   if(selectedFiles.length === 0 || isUploading) return;
   if(currentPaymentStatus === "blocked"){
     alert("お支払いに問題があるため、現在アップロードをご利用いただけません。設定画面からお支払い状況をご確認ください。");
+    return;
+  }
+  if(currentTrialExpired){
+    alert("無料トライアル期間が終了しました。引き続きご利用いただくには、設定画面からお支払い手続きをお願いします。");
     return;
   }
 
